@@ -310,6 +310,12 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
   const [newColor, setNewColor] = useState('#8b5cf6');
   const [showAdvancedCoords, setShowAdvancedCoords] = useState(false);
 
+  useEffect(() => {
+    if (!selectedId) {
+      setShowAdvancedCoords(false);
+    }
+  }, [selectedId]);
+
   const updateObjects = (newObjects) => {
     setHistory(prev => {
       const newHistory = [...prev, objects];
@@ -663,22 +669,20 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
         ))}
 
         {/* Usamos onClick en lugar de onPointerUp para no bloquear el drag de la cámara */}
-        <mesh 
-          rotation={[-Math.PI / 2, 0, 0]} 
-          position={[0, 0, 0]} 
-          onClick={(e) => {
-            e.stopPropagation();
-            if(placementMode) {
+        {placementMode && (
+          <mesh 
+            rotation={[-Math.PI / 2, 0, 0]} 
+            position={[0, 0, 0]} 
+            onClick={(e) => {
+              e.stopPropagation();
               handleGroundClick(e);
-            } else {
-              setSelectedId(null);
-            }
-          }}
-          receiveShadow
-        >
-          <planeGeometry args={[100, 100]} />
-          <meshStandardMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
+            }}
+            receiveShadow
+          >
+            <planeGeometry args={[100, 100]} />
+            <meshStandardMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
+        )}
 
         <ContactShadows position={[0, -0.01, 0]} opacity={0.4} scale={20} blur={2} far={4} />
         <Grid 

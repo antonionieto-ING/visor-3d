@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { Trash2, Save, FolderOpen, LogIn, User, X, Edit2, Check } from 'lucide-react';
+import { Trash2, Save, FolderOpen, LogIn, User, X, Edit2, Check, LogOut } from 'lucide-react';
 import Editor3D from './Editor3D';
 import './index.css';
 
@@ -21,6 +21,7 @@ export default function App() {
   
   const [pendingSave, setPendingSave] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
 
   // Formularios y Renombrado
   const [email, setEmail] = useState('');
@@ -28,6 +29,7 @@ export default function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [editingProjectName, setEditingProjectName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -143,6 +145,7 @@ export default function App() {
     e.preventDefault();
     if (!newProjectName.trim()) return;
     
+    setSaveStatus('saving');
     const newProj = {
       name: newProjectName,
       objects: objects,
@@ -157,7 +160,9 @@ export default function App() {
       setCurrentProject(newProj);
       setSaveModalOpen(false);
       setNewProjectName('');
-      alert("Guardado localmente en nuevo proyecto (Invitado)");
+      
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
       try {
         const docRef = await addDoc(collection(db, "projects"), {
@@ -169,9 +174,12 @@ export default function App() {
         setCurrentProject(savedProj);
         setSaveModalOpen(false);
         setNewProjectName('');
-        alert("¡Proyecto guardado en la nube!");
+        
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
       } catch (err) {
         console.error("Error creando proyecto", err);
+        setSaveStatus('idle');
       }
     }
   };
@@ -200,8 +208,6 @@ export default function App() {
   };
 
   const deleteProject = async (id) => {
-    if (!window.confirm("¿Estás seguro de borrar este proyecto?")) return;
-    
     if (isGuest) {
       const updated = projects.filter(p => p.id !== id);
       setProjects(updated);
@@ -216,6 +222,7 @@ export default function App() {
         console.error("Error borrando proyecto", err);
       }
     }
+    setConfirmDeleteId(null);
   };
 
   const openProject = (proj) => {
@@ -227,6 +234,7 @@ export default function App() {
 
   const saveProject = async (newObjects) => {
     if (!currentProject) return;
+    setSaveStatus('saving');
     
     if (isGuest) {
       const updated = projects.map(p => 
@@ -234,7 +242,8 @@ export default function App() {
       );
       setProjects(updated);
       localStorage.setItem('guestProjects', JSON.stringify(updated));
-      alert("Guardado localmente (Modo Invitado)");
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
       try {
         const projRef = doc(db, "projects", currentProject.id);
@@ -242,10 +251,12 @@ export default function App() {
           objects: newObjects,
           updatedAt: serverTimestamp()
         });
-        alert("¡Proyecto guardado en la nube!");
         loadProjects(user.uid);
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
       } catch (err) {
         console.error("Error guardando proyecto", err);
+        setSaveStatus('idle');
         alert("Error al guardar");
       }
     }
@@ -266,8 +277,24 @@ export default function App() {
           {user || isGuest ? (
             <>
               <button className="btn" onClick={() => setView('dashboard')} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)' }}><FolderOpen size={16} /> Mis Proyectos</button>
-              <button className="btn" onClick={handleTopBarSave} style={{ padding: '8px 16px', backgroundColor: '#10b981' }}><Save size={16} /> Guardar</button>
-              {user && <div style={{ marginLeft: '12px', fontSize: '13px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}><User size={14}/> {user.email}</div>}
+              
+              <button 
+                className="btn" 
+                onClick={handleTopBarSave} 
+                style={{ padding: '8px 16px', backgroundColor: saveStatus === 'saved' ? '#10b981' : (saveStatus === 'saving' ? '#fbbf24' : '#10b981'), transition: 'all 0.3s ease' }}
+                disabled={saveStatus === 'saving'}
+              >
+                {saveStatus === 'saved' ? <><Check size={16} /> ¡Guardado!</> : <><Save size={16} /> Guardar</>}
+              </button>
+              
+              {user && (
+                <div style={{ marginLeft: '12px', fontSize: '13px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <User size={14}/> {user.email}
+                  <button onClick={handleLogout} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', marginLeft: '4px', display: 'flex', alignItems: 'center' }} title="Cerrar Sesión">
+                    <LogOut size={14} />
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -361,7 +388,9 @@ export default function App() {
                 style={{ padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
                 autoFocus
               />
-              <button type="submit" className="btn" style={{ backgroundColor: '#10b981' }}>Guardar y Continuar</button>
+              <button type="submit" className="btn" style={{ backgroundColor: '#10b981' }}>
+                {saveStatus === 'saving' ? 'Guardando...' : 'Guardar y Continuar'}
+              </button>
             </form>
           </div>
         </div>
@@ -435,9 +464,21 @@ export default function App() {
                 <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>{proj.objects?.length || 0} figuras</p>
                 <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
                   <button className="btn" style={{ flex: 1, padding: '8px' }} onClick={() => openProject(proj)}>Abrir</button>
-                  <button className="btn btn-danger" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => deleteProject(proj.id)}>
-                    <Trash2 size={16} />
-                  </button>
+                  
+                  {confirmDeleteId === proj.id ? (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button className="btn btn-danger" style={{ padding: '8px', fontSize: '12px', width: 'auto' }} onClick={() => deleteProject(proj.id)}>
+                        ⚠️ ¿Seguro?
+                      </button>
+                      <button className="btn" style={{ padding: '8px', fontSize: '12px', width: 'auto', background: 'rgba(255,255,255,0.1)' }} onClick={() => setConfirmDeleteId(null)}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="btn btn-danger" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => setConfirmDeleteId(proj.id)}>
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
