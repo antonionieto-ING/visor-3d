@@ -38,8 +38,60 @@ const checkOverlap = (boxA, boxB) => {
   );
 };
 
+// Resuelve la colisión eje por eje para permitir deslizarse y quedar completamente pegado
+const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => {
+  let [x, y, z] = newPos;
+  const [lastX, lastY, lastZ] = lastPos;
+
+  const { width = 1, height = 1, depth = 1, radius = 0.6 } = myDims;
+  const rx = myType === 'cube' ? width / 2 : radius;
+  const ry = myType === 'cube' ? height / 2 : radius;
+  const rz = myType === 'cube' ? depth / 2 : radius;
+
+  // EPSILON para evitar problemas de precisión de coma flotante al quedar pegados
+  const EPS = 0.001;
+
+  // Comprobar eje X
+  let tempBox = getAABB([x, lastY, lastZ], myType, myDims);
+  for (const obj of allObjects) {
+    if (obj.id === myId) continue;
+    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
+    if (checkOverlap(tempBox, otherBox)) {
+      if (x > lastX) x = otherBox.minX - rx - EPS; // Movimiento hacia la derecha
+      else x = otherBox.maxX + rx + EPS; // Movimiento hacia la izquierda
+      break;
+    }
+  }
+
+  // Comprobar eje Y
+  tempBox = getAABB([x, y, lastZ], myType, myDims);
+  for (const obj of allObjects) {
+    if (obj.id === myId) continue;
+    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
+    if (checkOverlap(tempBox, otherBox)) {
+      if (y > lastY) y = otherBox.minY - ry - EPS;
+      else y = otherBox.maxY + ry + EPS;
+      break;
+    }
+  }
+
+  // Comprobar eje Z
+  tempBox = getAABB([x, y, z], myType, myDims);
+  for (const obj of allObjects) {
+    if (obj.id === myId) continue;
+    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
+    if (checkOverlap(tempBox, otherBox)) {
+      if (z > lastZ) z = otherBox.minZ - rz - EPS;
+      else z = otherBox.maxZ + rz + EPS;
+      break;
+    }
+  }
+
+  return [x, y, z];
+};
+
 // Componente para Formas Básicas
-const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelect, onTransformEnd, setDragging, allowOverlap, allObjects }) => {
+const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects }) => {
   const [hovered, setHovered] = useState(false);
   const meshRef = useRef();
   
@@ -72,35 +124,15 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
   const handleTransformChange = () => {
     if (!meshRef.current) return;
     
-    const newPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
+    let newPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
     
     if (!allowOverlap) {
-      const myBox = getAABB(newPos, type, dimensions);
-      
-      let hasCollision = false;
-      for (const otherObj of allObjects) {
-        if (otherObj.id === id) continue; // No chocar contra uno mismo
-        const otherBox = getAABB(otherObj.position, otherObj.type, otherObj.dimensions);
-        if (checkOverlap(myBox, otherBox)) {
-          hasCollision = true;
-          break;
-        }
-      }
-
-      if (hasCollision) {
-        // Bloqueado: revertir posición en la malla directamente
-        meshRef.current.position.set(...lastValidPosition.current);
-      } else {
-        // Valido: actualizar última posición
-        lastValidPosition.current = [...newPos];
-      }
-    } else {
-      // Si se permite superposición, simplemente actualiza
-      lastValidPosition.current = [...newPos];
+      newPos = resolveCollision(lastValidPosition.current, newPos, type, dimensions, allObjects, id);
+      meshRef.current.position.set(...newPos);
     }
     
-    // Actualizar para el tooltip
-    currentPos.current = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
+    lastValidPosition.current = [...newPos];
+    currentPos.current = [...newPos];
   };
 
   const renderTooltip = () => {
@@ -169,7 +201,6 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
           object={meshRef.current} 
           mode="translate"
           onChange={handleTransformChange}
-          onDraggingChanged={(e) => setDragging(e.value)}
           onMouseUp={() => {
             if (meshRef.current) {
               const finalPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
@@ -187,7 +218,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [placementMode, setPlacementMode] = useState(null);
   const [allowOverlap, setAllowOverlap] = useState(true);
-  const [isDraggingObj, setIsDraggingObj] = useState(false); // Para bloquear OrbitControls
   
   const [dims, setDims] = useState({
     width: 1,
@@ -202,9 +232,8 @@ export default function App() {
     setDims(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
   };
 
-  const handleGroundPointerUp = (e) => {
-    // Si la cámara se estaba moviendo, el evento click no debería añadir cosas, 
-    // pero onPointerUp saltará. Usamos un pequeño truco: solo añadir si estamos en modo colocación.
+  // Cuando hacemos clic en el suelo para colocar algo
+  const handleGroundClick = (e) => {
     if (!placementMode) {
       setSelectedId(null);
       return;
@@ -318,11 +347,19 @@ export default function App() {
 
         <div className="help-text">
           - <b>Movimiento Diagonal:</b> Arrastra los cuadraditos del centro de las flechas.<br/>
-          - <b>Solución de rotación:</b> Haz clic en el fondo oscuro para soltar el objeto y poder rotar la cámara.
+          - <b>Para deseleccionar:</b> Haz clic en el fondo vacío y podrás rotar la cámara.
         </div>
       </div>
 
-      <Canvas camera={{ position: [6, 6, 8], fov: 45 }} shadows>
+      <Canvas 
+        camera={{ position: [6, 6, 8], fov: 45 }} 
+        shadows
+        onPointerMissed={(e) => {
+          if (e.button === 0 && !placementMode) {
+            setSelectedId(null);
+          }
+        }}
+      >
         <ambientLight intensity={0.5} />
         <directionalLight 
           position={[10, 10, 5]} 
@@ -343,19 +380,22 @@ export default function App() {
             isSelected={selectedId === obj.id}
             onSelect={setSelectedId}
             onTransformEnd={handleTransformEnd}
-            setDragging={setIsDraggingObj}
             allowOverlap={allowOverlap}
             allObjects={objects}
           />
         ))}
 
-        {/* Usamos onPointerUp pero solo si no estamos arrastrando la cámara */}
+        {/* Usamos onClick en lugar de onPointerUp para no bloquear el drag de la cámara */}
         <mesh 
           rotation={[-Math.PI / 2, 0, 0]} 
           position={[0, 0, 0]} 
-          onPointerUp={(e) => {
-            // Un pequeño retraso para evitar interferir con OrbitControls
-            if(!isDraggingObj) handleGroundPointerUp(e);
+          onClick={(e) => {
+            e.stopPropagation();
+            if(placementMode) {
+              handleGroundClick(e);
+            } else {
+              setSelectedId(null);
+            }
           }}
           receiveShadow
         >
@@ -372,10 +412,9 @@ export default function App() {
           position={[0, -0.02, 0]} 
         />
         
-        {/* Desactivamos OrbitControls explícitamente cuando arrastramos un objeto con TransformControls */}
+        {/* React Three Drei gestionará automáticamente este OrbitControls gracias a makeDefault */}
         <OrbitControls 
           makeDefault 
-          enabled={!isDraggingObj}
           minPolarAngle={0} 
           maxPolarAngle={Math.PI / 2 - 0.05}
         />
