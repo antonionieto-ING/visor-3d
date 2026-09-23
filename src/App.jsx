@@ -1,5 +1,6 @@
 import React, { useState, Suspense, useRef, useMemo, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
+import * as THREE from 'three';
 import { OrbitControls, Grid, Environment, ContactShadows, TransformControls, Html } from '@react-three/drei';
 import { Box as BoxIcon, Circle, Trash2, MousePointer2 } from 'lucide-react';
 import './index.css';
@@ -23,6 +24,22 @@ const getAABB = (objPosition, type, dimensions) => {
       minZ: z - radius, maxZ: z + radius
     };
   }
+  if (type === 'cylinder') {
+    const { radius = 0.6, height = 1 } = dimensions;
+    return {
+      minX: x - radius, maxX: x + radius,
+      minY: y - height / 2, maxY: y + height / 2,
+      minZ: z - radius, maxZ: z + radius
+    };
+  }
+  if (type === 'ramp') {
+    const { width = 1, height = 1, depth = 1 } = dimensions;
+    return {
+      minX: x - width / 2, maxX: x + width / 2,
+      minY: y - height / 2, maxY: y + height / 2,
+      minZ: z - depth / 2, maxZ: z + depth / 2
+    };
+  }
   return null;
 };
 
@@ -44,9 +61,9 @@ const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => 
   const [lastX, lastY, lastZ] = lastPos;
 
   const { width = 1, height = 1, depth = 1, radius = 0.6 } = myDims;
-  const rx = myType === 'cube' ? width / 2 : radius;
-  const ry = myType === 'cube' ? height / 2 : radius;
-  const rz = myType === 'cube' ? depth / 2 : radius;
+  const rx = (myType === 'cube' || myType === 'ramp') ? width / 2 : radius;
+  const ry = (myType === 'cube' || myType === 'ramp' || myType === 'cylinder') ? height / 2 : radius;
+  const rz = (myType === 'cube' || myType === 'ramp') ? depth / 2 : radius;
 
   // EPSILON para evitar problemas de precisión de coma flotante al quedar pegados
   const EPS = 0.001;
@@ -106,6 +123,19 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
 
   const { width = 1, height = 1, depth = 1, radius = 0.6 } = dimensions || {};
 
+  const rampGeom = useMemo(() => {
+    if (type !== 'ramp') return null;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(0, height);
+    shape.lineTo(depth, 0);
+    shape.lineTo(0, 0);
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
+    geom.rotateY(-Math.PI / 2);
+    geom.center();
+    return geom;
+  }, [type, width, height, depth]);
+
   const handlePointerOver = (e) => {
     e.stopPropagation();
     setHovered(true);
@@ -148,14 +178,23 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
     const x = pos[0].toFixed(2);
     const y = pos[1].toFixed(2);
     const z = pos[2].toFixed(2);
+    
+    const yOffset = (type === 'cube' || type === 'ramp' || type === 'cylinder') ? height / 2 + 0.3 : radius + 0.3;
 
     return (
-      <Html center position={[0, type === 'cube' ? height / 2 + 0.3 : radius + 0.3, 0]}>
+      <Html center position={[0, yOffset, 0]}>
         <div className="tooltip">
-          <b>{type === 'cube' ? 'Cubo' : 'Esfera'}</b><br/>
-          {type === 'cube' 
+          <b>
+            {type === 'cube' && 'Cubo'}
+            {type === 'sphere' && 'Esfera'}
+            {type === 'cylinder' && 'Cilindro'}
+            {type === 'ramp' && 'Rampa'}
+          </b><br/>
+          {(type === 'cube' || type === 'ramp')
             ? <>Dim: <span>{width}x{height}x{depth}</span></> 
-            : <>Radio: <span>{radius}</span></>}
+            : (type === 'cylinder' 
+                ? <>Rad: <span>{radius}</span>, Alt: <span>{height}</span></>
+                : <>Radio: <span>{radius}</span></>)}
           <br/>
           Pos: <span>X:{x} Y:{y} Z:{z}</span>
         </div>
@@ -195,6 +234,39 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
         </mesh>
       );
     }
+
+    if (type === 'cylinder') {
+      return (
+        <mesh 
+          ref={meshRef} 
+          position={position} 
+          onClick={handleClick} 
+          onPointerOver={handlePointerOver} 
+          onPointerOut={handlePointerOut}
+        >
+          <cylinderGeometry args={[radius, radius, height, 32]} />
+          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
+          {renderTooltip()}
+        </mesh>
+      );
+    }
+
+    if (type === 'ramp' && rampGeom) {
+      return (
+        <mesh 
+          ref={meshRef} 
+          position={position} 
+          onClick={handleClick} 
+          onPointerOver={handlePointerOver} 
+          onPointerOut={handlePointerOut}
+        >
+          <primitive object={rampGeom} attach="geometry" />
+          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
+          {renderTooltip()}
+        </mesh>
+      );
+    }
+
     return null;
   };
 
@@ -223,6 +295,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [placementMode, setPlacementMode] = useState(null);
   const [allowOverlap, setAllowOverlap] = useState(true);
+  const [selectedShape, setSelectedShape] = useState('cube');
   
   const [dims, setDims] = useState({
     width: 1,
@@ -246,7 +319,7 @@ export default function App() {
 
     const { x, z } = e.point;
     let yPos = dims.elevation;
-    if (placementMode === 'cube') yPos += dims.height / 2;
+    if (placementMode === 'cube' || placementMode === 'ramp' || placementMode === 'cylinder') yPos += dims.height / 2;
     if (placementMode === 'sphere') yPos += dims.radius;
 
     const newObj = {
@@ -324,23 +397,29 @@ export default function App() {
               <span className="slider"></span>
             </label>
           </div>
+
+          <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+            <label>Figura</label>
+            <select 
+              value={selectedShape} 
+              onChange={(e) => setSelectedShape(e.target.value)}
+              style={{ width: '100%', padding: '6px', background: 'rgba(0,0,0,0.4)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', outline: 'none' }}
+            >
+              <option value="cube">Cubo</option>
+              <option value="sphere">Esfera</option>
+              <option value="cylinder">Cilindro</option>
+              <option value="ramp">Rampa</option>
+            </select>
+          </div>
         </div>
 
         <div className="button-group">
           <button 
-            className={`btn ${placementMode === 'cube' ? 'active' : ''}`}
-            onClick={() => setPlacementMode(placementMode === 'cube' ? null : 'cube')}
+            className={`btn ${placementMode ? 'active' : ''}`}
+            onClick={() => setPlacementMode(placementMode ? null : selectedShape)}
           >
-            {placementMode === 'cube' ? <MousePointer2 size={18} /> : <BoxIcon size={18} />}
-            {placementMode === 'cube' ? 'Haz clic en el suelo...' : 'Poner Cubo'}
-          </button>
-
-          <button 
-            className={`btn ${placementMode === 'sphere' ? 'active' : ''}`}
-            onClick={() => setPlacementMode(placementMode === 'sphere' ? null : 'sphere')}
-          >
-            {placementMode === 'sphere' ? <MousePointer2 size={18} /> : <Circle size={18} />}
-            {placementMode === 'sphere' ? 'Haz clic en el suelo...' : 'Poner Esfera'}
+            <MousePointer2 size={18} />
+            {placementMode ? 'Haz clic en el suelo...' : 'Poner Figura'}
           </button>
           
           {objects.length > 0 && (
