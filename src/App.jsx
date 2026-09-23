@@ -1,612 +1,274 @@
-import React, { useState, Suspense, useRef, useMemo, useEffect } from 'react';
-import { Canvas } from '@react-three/fiber';
-import * as THREE from 'three';
-import { OrbitControls, Grid, Environment, ContactShadows, TransformControls, Html } from '@react-three/drei';
-import { Box as BoxIcon, Circle, Trash2, MousePointer2, Undo2, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { auth, db } from './firebase';
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { Trash2 } from 'lucide-react';
+import Editor3D from './Editor3D';
 import './index.css';
 
-// --- FUNCIONES DE COLISIÓN ---
-const getAABB = (objPosition, type, dimensions) => {
-  const [x, y, z] = objPosition;
-  if (type === 'cube') {
-    const { width = 1, height = 1, depth = 1 } = dimensions;
-    return {
-      minX: x - width / 2, maxX: x + width / 2,
-      minY: y - height / 2, maxY: y + height / 2,
-      minZ: z - depth / 2, maxZ: z + depth / 2
-    };
-  }
-  if (type === 'sphere') {
-    const { radius = 0.6 } = dimensions;
-    return {
-      minX: x - radius, maxX: x + radius,
-      minY: y - radius, maxY: y + radius,
-      minZ: z - radius, maxZ: z + radius
-    };
-  }
-  if (type === 'cylinder') {
-    const { radius = 0.6, height = 1 } = dimensions;
-    return {
-      minX: x - radius, maxX: x + radius,
-      minY: y - height / 2, maxY: y + height / 2,
-      minZ: z - radius, maxZ: z + radius
-    };
-  }
-  if (type === 'ramp') {
-    const { width = 1, height = 1, depth = 1 } = dimensions;
-    return {
-      minX: x - width / 2, maxX: x + width / 2,
-      minY: y - height / 2, maxY: y + height / 2,
-      minZ: z - depth / 2, maxZ: z + depth / 2
-    };
-  }
-  return null;
-};
-
-const checkOverlap = (boxA, boxB) => {
-  if (!boxA || !boxB) return false;
-  return (
-    boxA.minX < boxB.maxX &&
-    boxA.maxX > boxB.minX &&
-    boxA.minY < boxB.maxY &&
-    boxA.maxY > boxB.minY &&
-    boxA.minZ < boxB.maxZ &&
-    boxA.maxZ > boxB.minZ
-  );
-};
-
-// Resuelve la colisión eje por eje para permitir deslizarse y quedar completamente pegado
-const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => {
-  let [x, y, z] = newPos;
-  const [lastX, lastY, lastZ] = lastPos;
-
-  const { width = 1, height = 1, depth = 1, radius = 0.6 } = myDims;
-  const rx = (myType === 'cube' || myType === 'ramp') ? width / 2 : radius;
-  const ry = (myType === 'cube' || myType === 'ramp' || myType === 'cylinder') ? height / 2 : radius;
-  const rz = (myType === 'cube' || myType === 'ramp') ? depth / 2 : radius;
-
-  // EPSILON para evitar problemas de precisión de coma flotante al quedar pegados
-  const EPS = 0.001;
-
-  // Comprobar colisión con el suelo (Y=0)
-  if (y - ry < 0) {
-    y = ry + EPS; // Impedir que atraviese el suelo
-  }
-
-  // Comprobar eje X
-  let tempBox = getAABB([x, lastY, lastZ], myType, myDims);
-  for (const obj of allObjects) {
-    if (obj.id === myId) continue;
-    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
-    if (checkOverlap(tempBox, otherBox)) {
-      if (x > lastX) x = otherBox.minX - rx - EPS; // Movimiento hacia la derecha
-      else x = otherBox.maxX + rx + EPS; // Movimiento hacia la izquierda
-      break;
-    }
-  }
-
-  // Comprobar eje Y (solo contra otros objetos, el suelo ya se comprobó)
-  tempBox = getAABB([x, y, lastZ], myType, myDims);
-  for (const obj of allObjects) {
-    if (obj.id === myId) continue;
-    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
-    if (checkOverlap(tempBox, otherBox)) {
-      if (y > lastY) y = otherBox.minY - ry - EPS;
-      else y = otherBox.maxY + ry + EPS;
-      break;
-    }
-  }
-
-  // Comprobar eje Z
-  tempBox = getAABB([x, y, z], myType, myDims);
-  for (const obj of allObjects) {
-    if (obj.id === myId) continue;
-    const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
-    if (checkOverlap(tempBox, otherBox)) {
-      if (z > lastZ) z = otherBox.minZ - rz - EPS;
-      else z = otherBox.maxZ + rz + EPS;
-      break;
-    }
-  }
-
-  return [x, y, z];
-};
-
-// Componente para Formas Básicas
-const BasicShape = ({ id, name, type, position, rotation, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects, transformMode }) => {
-  const [hovered, setHovered] = useState(false);
-  const meshRef = useRef();
-  
-  // Guardamos la última posición válida conocida para revertir si hay colisión
-  const lastValidPosition = useRef([...position]);
-  const currentPos = useRef([...position]);
-  const currentRot = useRef(rotation ? [...rotation] : [0, 0, 0]);
-
-  const { width = 1, height = 1, depth = 1, radius = 0.6 } = dimensions || {};
-
-  const rampGeom = useMemo(() => {
-    if (type !== 'ramp') return null;
-    const shape = new THREE.Shape();
-    shape.moveTo(0, 0);
-    shape.lineTo(0, height);
-    shape.lineTo(depth, 0);
-    shape.lineTo(0, 0);
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
-    geom.rotateY(-Math.PI / 2);
-    geom.center();
-    return geom;
-  }, [type, width, height, depth]);
-
-  const handlePointerOver = (e) => {
-    e.stopPropagation();
-    setHovered(true);
-    document.body.style.cursor = 'pointer';
-  };
-
-  const handlePointerOut = (e) => {
-    e.stopPropagation();
-    setHovered(false);
-    document.body.style.cursor = 'auto';
-  };
-
-  const handleClick = (e) => {
-    e.stopPropagation();
-    onSelect(id);
-  };
-
-  const emissiveColor = isSelected ? "#333333" : (hovered ? "#111111" : "#000000");
-
-  // Función que se ejecuta continuamente mientras arrastras
-  const handleTransformChange = () => {
-    if (!meshRef.current) return;
-    
-    let newPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
-    
-    if (!allowOverlap && transformMode === 'translate') {
-      newPos = resolveCollision(lastValidPosition.current, newPos, type, dimensions, allObjects, id);
-      meshRef.current.position.set(...newPos);
-    }
-    
-    lastValidPosition.current = [...newPos];
-    currentPos.current = [...newPos];
-    currentRot.current = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
-  };
-
-  const renderTooltip = () => {
-    if (!hovered || isSelected) return null;
-    
-    // Usamos el ref para coordenadas en tiempo real sin re-renderizar todo
-    const pos = currentPos.current;
-    const x = pos[0].toFixed(2);
-    const y = pos[1].toFixed(2);
-    const z = pos[2].toFixed(2);
-    
-    const yOffset = (type === 'cube' || type === 'ramp' || type === 'cylinder') ? height / 2 + 0.3 : radius + 0.3;
-
-    return (
-      <Html center position={[0, yOffset, 0]}>
-        <div className="tooltip">
-          <b>{name || (type === 'cube' ? 'Cubo' : type === 'sphere' ? 'Esfera' : type === 'cylinder' ? 'Cilindro' : 'Rampa')}</b><br/>
-          {(type === 'cube' || type === 'ramp')
-            ? <>Dim: <span>{width}x{height}x{depth}</span></> 
-            : (type === 'cylinder' 
-                ? <>Rad: <span>{radius}</span>, Alt: <span>{height}</span></>
-                : <>Radio: <span>{radius}</span></>)}
-          <br/>
-          Pos: <span>X:{x} Y:{y} Z:{z}</span>
-        </div>
-      </Html>
-    );
-  };
-
-  const renderShape = () => {
-    const rot = rotation || [0, 0, 0];
-    if (type === 'cube') {
-      return (
-        <mesh 
-          ref={meshRef} 
-          position={position} 
-          rotation={rot}
-          onClick={handleClick} 
-          onPointerOver={handlePointerOver} 
-          onPointerOut={handlePointerOut}
-        >
-          <boxGeometry args={[width, height, depth]} />
-          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
-          {renderTooltip()}
-        </mesh>
-      );
-    }
-    
-    if (type === 'sphere') {
-      return (
-        <mesh 
-          ref={meshRef} 
-          position={position} 
-          rotation={rot}
-          onClick={handleClick} 
-          onPointerOver={handlePointerOver} 
-          onPointerOut={handlePointerOut}
-        >
-          <sphereGeometry args={[radius, 32, 32]} />
-          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
-          {renderTooltip()}
-        </mesh>
-      );
-    }
-
-    if (type === 'cylinder') {
-      return (
-        <mesh 
-          ref={meshRef} 
-          position={position} 
-          rotation={rot}
-          onClick={handleClick} 
-          onPointerOver={handlePointerOver} 
-          onPointerOut={handlePointerOut}
-        >
-          <cylinderGeometry args={[radius, radius, height, 32]} />
-          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
-          {renderTooltip()}
-        </mesh>
-      );
-    }
-
-    if (type === 'ramp' && rampGeom) {
-      return (
-        <mesh 
-          ref={meshRef} 
-          position={position} 
-          rotation={rot}
-          onClick={handleClick} 
-          onPointerOver={handlePointerOver} 
-          onPointerOut={handlePointerOut}
-        >
-          <primitive object={rampGeom} attach="geometry" />
-          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
-          {renderTooltip()}
-        </mesh>
-      );
-    }
-
-    return null;
-  };
-
-  return (
-    <>
-      {renderShape()}
-      {isSelected && meshRef.current && (
-        <TransformControls 
-          object={meshRef.current} 
-          mode={transformMode || "translate"}
-          space={transformMode === 'rotate' ? "local" : "world"}
-          onChange={handleTransformChange}
-          onMouseUp={() => {
-            if (meshRef.current) {
-              const finalPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
-              const finalRot = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
-              onTransformEnd(id, finalPos, finalRot);
-            }
-          }}
-        />
-      )}
-    </>
-  );
-};
-
 export default function App() {
-  const [objects, setObjects] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
-  const [placementMode, setPlacementMode] = useState(null);
-  const [allowOverlap, setAllowOverlap] = useState(true);
-  const [selectedShape, setSelectedShape] = useState('cube');
-  const [transformMode, setTransformMode] = useState('translate');
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [user, setUser] = useState(undefined);
+  const [isGuest, setIsGuest] = useState(false);
+  const [view, setView] = useState('login'); // 'login', 'dashboard', 'editor'
+  const [projects, setProjects] = useState([]);
+  const [currentProject, setCurrentProject] = useState(null);
   
-  const [shapeName, setShapeName] = useState('');
-  const [shapeColor, setShapeColor] = useState('#8b5cf6');
-
-  const updateObjects = (newObjects) => {
-    setHistory(prev => {
-      const newHistory = [...prev, objects];
-      if (newHistory.length > 50) newHistory.shift();
-      return newHistory;
-    });
-    setObjects(newObjects);
-  };
-
-  const handleUndo = () => {
-    setHistory(prev => {
-      if (prev.length === 0) return prev;
-      const previousObjects = prev[prev.length - 1];
-      setObjects(previousObjects);
-      setSelectedId(null); // Evitar bugs si el objeto seleccionado ya no existe
-      return prev.slice(0, -1);
-    });
-  };
+  // Formularios
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        handleUndo();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setIsGuest(false);
+        setView('dashboard');
+        loadProjects(currentUser.uid);
+      } else if (!isGuest) {
+        setView('login');
       }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-  
-  const [dims, setDims] = useState({
-    width: 1,
-    height: 1,
-    depth: 1,
-    radius: 0.6,
-    elevation: 0
-  });
+    });
+    return () => unsubscribe();
+  }, [isGuest]);
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setDims(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
-  };
-
-  // Cuando hacemos clic en el suelo para colocar algo
-  const handleGroundClick = (e) => {
-    if (!placementMode) {
-      setSelectedId(null);
-      return;
+  const loadProjects = async (uid) => {
+    try {
+      const q = query(collection(db, "projects"), where("userId", "==", uid));
+      const querySnapshot = await getDocs(q);
+      const projs = [];
+      querySnapshot.forEach((doc) => {
+        projs.push({ id: doc.id, ...doc.data() });
+      });
+      setProjects(projs);
+    } catch (e) {
+      console.error("Error cargando proyectos", e);
     }
+  };
 
-    const { x, z } = e.point;
-    let yPos = dims.elevation;
-    if (placementMode === 'cube' || placementMode === 'ramp' || placementMode === 'cylinder') yPos += dims.height / 2;
-    if (placementMode === 'sphere') yPos += dims.radius;
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      setError('Error al iniciar sesión. Comprueba tus datos.');
+    }
+    setLoading(false);
+  };
 
-    const newObj = {
-      id: Date.now(),
-      name: shapeName,
-      type: placementMode,
-      position: [x, yPos, z],
-      rotation: [0, 0, 0],
-      dimensions: { ...dims },
-      color: shapeColor
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await createUserWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      setError('Error al registrarse. Puede que el correo ya exista o la contraseña sea muy débil.');
+    }
+    setLoading(false);
+  };
+
+  const handleGuest = () => {
+    setIsGuest(true);
+    const localProjects = JSON.parse(localStorage.getItem('guestProjects')) || [];
+    setProjects(localProjects);
+    setView('dashboard');
+  };
+
+  const handleLogout = async () => {
+    if (isGuest) {
+      setIsGuest(false);
+      setView('login');
+    } else {
+      await signOut(auth);
+    }
+  };
+
+  const createProject = async (e) => {
+    e.preventDefault();
+    if (!newProjectName.trim()) return;
+    
+    const newProj = {
+      name: newProjectName,
+      objects: [],
+      updatedAt: user ? serverTimestamp() : Date.now()
     };
 
-    // Validar colisión inicial si no se permite superposición
-    if (!allowOverlap) {
-      const myBox = getAABB(newObj.position, newObj.type, newObj.dimensions);
-      let collision = false;
-      for (const obj of objects) {
-        const otherBox = getAABB(obj.position, obj.type, obj.dimensions);
-        if (checkOverlap(myBox, otherBox)) {
-          collision = true; break;
-        }
-      }
-      if (collision) {
-        // No creamos el objeto si cae encima de otro
-        return;
+    if (isGuest) {
+      newProj.id = Date.now().toString();
+      const updated = [...projects, newProj];
+      setProjects(updated);
+      localStorage.setItem('guestProjects', JSON.stringify(updated));
+      setNewProjectName('');
+    } else {
+      try {
+        const docRef = await addDoc(collection(db, "projects"), {
+          ...newProj,
+          userId: user.uid
+        });
+        setProjects([...projects, { id: docRef.id, ...newProj }]);
+        setNewProjectName('');
+      } catch (err) {
+        console.error("Error creando proyecto", err);
       }
     }
-
-    updateObjects([...objects, newObj]);
-    setSelectedId(newObj.id);
-    setPlacementMode(null);
   };
 
-  // Cuando soltamos el objeto tras moverlo, guardamos el estado final en React
-  const handleTransformEnd = (id, newPosition, newRotation) => {
-    updateObjects(objects.map(obj => 
-      obj.id === id ? { ...obj, position: newPosition, rotation: newRotation } : obj
-    ));
+  const deleteProject = async (id) => {
+    if (!window.confirm("¿Estás seguro de borrar este proyecto?")) return;
+    
+    if (isGuest) {
+      const updated = projects.filter(p => p.id !== id);
+      setProjects(updated);
+      localStorage.setItem('guestProjects', JSON.stringify(updated));
+    } else {
+      try {
+        await deleteDoc(doc(db, "projects", id));
+        setProjects(projects.filter(p => p.id !== id));
+      } catch (err) {
+        console.error("Error borrando proyecto", err);
+      }
+    }
   };
 
-  return (
-    <div className="app-container">
-      <div className={`ui-panel ${isPanelOpen ? '' : 'collapsed'}`}>
-        <div className="panel-header" onClick={() => setIsPanelOpen(!isPanelOpen)}>
-          <h1>Visor y Creador 3D</h1>
-          {isPanelOpen ? <ChevronUp size={24} color="#a78bfa" /> : <ChevronDown size={24} color="#a78bfa" />}
-        </div>
-        
-        <div className="panel-content">
-          <p>Configura las medidas y haz clic en "Poner" para colocarlo. Usa las flechas 3D para mover.</p>
+  const openProject = (proj) => {
+    setCurrentProject(proj);
+    setView('editor');
+  };
+
+  const saveProject = async (newObjects) => {
+    if (!currentProject) return;
+    
+    if (isGuest) {
+      const updated = projects.map(p => 
+        p.id === currentProject.id ? { ...p, objects: newObjects, updatedAt: Date.now() } : p
+      );
+      setProjects(updated);
+      localStorage.setItem('guestProjects', JSON.stringify(updated));
+      alert("Guardado localmente (Modo Invitado)");
+    } else {
+      try {
+        const projRef = doc(db, "projects", currentProject.id);
+        await updateDoc(projRef, {
+          objects: newObjects,
+          updatedAt: serverTimestamp()
+        });
+        alert("¡Proyecto guardado en la nube!");
+        loadProjects(user.uid);
+      } catch (err) {
+        console.error("Error guardando proyecto", err);
+        alert("Error al guardar");
+      }
+    }
+  };
+
+  if (user === undefined) return <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}><p>Cargando...</p></div>;
+
+  if (view === 'login') {
+    return (
+      <div className="app-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'radial-gradient(circle at center, #1e293b, #0f172a)' }}>
+        <div className="ui-panel" style={{ position: 'relative', top: 'auto', left: 'auto', width: '380px', animation: 'none' }}>
+          <h1 style={{ textAlign: 'center', marginBottom: '24px' }}>Visor y Creador 3D</h1>
+          <p style={{ textAlign: 'center', marginBottom: '24px' }}>Inicia sesión para guardar tus proyectos en la nube.</p>
           
-          <div className="settings-group">
-            <div className="input-row">
-              <label>Ancho (X)</label>
-              <input type="number" step="0.1" name="width" value={dims.width} onChange={handleInputChange} />
-            </div>
-          <div className="input-row">
-            <label>Alto (Y)</label>
-            <input type="number" step="0.1" name="height" value={dims.height} onChange={handleInputChange} />
-          </div>
-          <div className="input-row">
-            <label>Prof. (Z)</label>
-            <input type="number" step="0.1" name="depth" value={dims.depth} onChange={handleInputChange} />
-          </div>
-          <div className="input-row">
-            <label>Radio (Esf.)</label>
-            <input type="number" step="0.1" name="radius" value={dims.radius} onChange={handleInputChange} />
-          </div>
-            <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-              <label title="Distancia desde el suelo">Elevación Base</label>
-              <input type="number" step="0.1" name="elevation" value={dims.elevation} onChange={handleInputChange} />
-            </div>
-            
-            <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-              <label>Color</label>
-              <input type="color" value={shapeColor} onChange={(e) => setShapeColor(e.target.value)} style={{ width: '60px', height: '30px', padding: '0', border: 'none', background: 'transparent', cursor: 'pointer' }} />
-            </div>
-
-            <div className="input-row" style={{ marginTop: '4px' }}>
-              <label>Nombre</label>
-              <input type="text" value={shapeName} onChange={(e) => setShapeName(e.target.value)} placeholder="Ej: Pared..." style={{ width: '120px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255, 255, 255, 0.1)', color: 'white', padding: '6px 8px', borderRadius: '6px', fontSize: '13px', outline: 'none' }} />
-            </div>
-            
-            <div className="switch-container">
-            <label className="switch-label">Permitir superposición</label>
-            <label className="switch">
+          {error && <div style={{ color: '#ef4444', fontSize: '13px', marginBottom: '16px', textAlign: 'center' }}>{error}</div>}
+          
+          <form style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', color: '#cbd5e1' }}>Email</label>
               <input 
-                type="checkbox" 
-                checked={allowOverlap} 
-                onChange={(e) => setAllowOverlap(e.target.checked)} 
+                type="email" 
+                value={email} 
+                onChange={e => setEmail(e.target.value)} 
+                style={{ padding: '10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
               />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          {selectedId && (
-            <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', paddingBottom: '4px' }}>
-              <label>Modo de Edición</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button 
-                  style={{ flex: 1, padding: '4px', background: transformMode === 'translate' ? '#3b82f6' : 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer' }}
-                  onClick={() => setTransformMode('translate')}
-                >
-                  Mover
-                </button>
-                <button 
-                  style={{ flex: 1, padding: '4px', background: transformMode === 'rotate' ? '#3b82f6' : 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer' }}
-                  onClick={() => setTransformMode('rotate')}
-                >
-                  Rotar
-                </button>
-              </div>
             </div>
-          )}
-
-          <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-            <label>Figura</label>
-            <select 
-              value={selectedShape} 
-              onChange={(e) => setSelectedShape(e.target.value)}
-              style={{ width: '100%', padding: '6px', background: 'rgba(0,0,0,0.4)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', outline: 'none' }}
-            >
-              <option value="cube">Cubo</option>
-              <option value="sphere">Esfera</option>
-              <option value="cylinder">Cilindro</option>
-              <option value="ramp">Rampa</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="panel-content">
-          <div className="button-group">
-            <button 
-              className={`btn ${placementMode ? 'active' : ''}`}
-              onClick={() => {
-                setPlacementMode(placementMode ? null : selectedShape);
-                if (!placementMode) setIsPanelOpen(false); // Colapsar al activar modo poner
-              }}
-            >
-              <MousePointer2 size={18} />
-              {placementMode ? 'Haz clic en el suelo...' : 'Poner Figura'}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', color: '#cbd5e1' }}>Contraseña</label>
+              <input 
+                type="password" 
+                value={password} 
+                onChange={e => setPassword(e.target.value)} 
+                style={{ padding: '10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
+              />
+            </div>
+            
+            <button className="btn" onClick={handleLogin} disabled={loading} style={{ marginTop: '8px' }}>
+              {loading ? 'Cargando...' : 'Iniciar Sesión'}
             </button>
-          
-          {objects.length > 0 && (
-            <button 
-              onClick={() => { 
-                if (selectedId) {
-                  updateObjects(objects.filter(o => o.id !== selectedId));
-                  setSelectedId(null);
-                } else {
-                  updateObjects([]); 
-                  setSelectedId(null);
-                }
-              }} 
-              className="btn btn-danger"
-            >
-              <Trash2 size={18} /> {selectedId ? 'Borrar Figura' : 'Limpiar Escena'}
+            <button className="btn" onClick={handleRegister} disabled={loading} style={{ backgroundColor: '#475569' }}>
+              Registrarse
             </button>
-          )}
+          </form>
 
-          <button 
-            onClick={handleUndo} 
-            className="btn"
-            disabled={history.length === 0}
-            style={{ opacity: history.length === 0 ? 0.5 : 1, cursor: history.length === 0 ? 'not-allowed' : 'pointer' }}
-          >
-            <Undo2 size={18} /> Deshacer
-          </button>
-        </div>
-
-        <div className="help-text">
-          - <b>Control + Z</b> para deshacer el último cambio.<br/>
-          - <b>Movimiento Diagonal:</b> Arrastra los cuadraditos del centro de las flechas.<br/>
-          - <b>Para deseleccionar:</b> Haz clic en el fondo vacío y podrás rotar la cámara.
-        </div>
+          <div className="help-text" style={{ marginTop: '24px' }}>
+            ¿Solo quieres echar un vistazo?<br/>
+            <button onClick={handleGuest} style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', textDecoration: 'underline', marginTop: '8px' }}>Entrar como Invitado</button>
           </div>
         </div>
       </div>
+    );
+  }
 
-      <Canvas 
-        camera={{ position: [6, 6, 8], fov: 45 }} 
-        shadows
-        onPointerMissed={(e) => {
-          if (e.button === 0 && !placementMode) {
-            setSelectedId(null);
-          }
-        }}
-      >
-        <ambientLight intensity={0.5} />
-        <directionalLight 
-          position={[10, 10, 5]} 
-          intensity={1} 
-          castShadow 
-          shadow-mapSize-width={1024} 
-          shadow-mapSize-height={1024}
-        />
-        
-        <Suspense fallback={null}>
-          <Environment preset="city" />
-        </Suspense>
+  if (view === 'dashboard') {
+    return (
+      <div className="app-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px', background: 'radial-gradient(circle at center, #1e293b, #0f172a)', overflowY: 'auto' }}>
+        <div style={{ width: '100%', maxWidth: '800px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '32px', background: 'linear-gradient(135deg, #a78bfa, #f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Tus Proyectos</h1>
+            <p style={{ margin: '8px 0 0 0', color: '#94a3b8' }}>
+              {isGuest ? 'Modo Invitado (Los proyectos solo se guardan en este navegador)' : `Conectado como ${user?.email}`}
+            </p>
+          </div>
+          <button className="btn btn-danger" style={{ width: 'auto' }} onClick={handleLogout}>Cerrar Sesión</button>
+        </div>
 
-        {objects.map(obj => (
-          <BasicShape 
-            key={obj.id} 
-            {...obj} 
-            isSelected={selectedId === obj.id}
-            onSelect={setSelectedId}
-            onTransformEnd={handleTransformEnd}
-            allowOverlap={allowOverlap}
-            allObjects={objects}
-            transformMode={transformMode}
-          />
-        ))}
+        <div style={{ width: '100%', maxWidth: '800px', background: 'rgba(30,41,59,0.5)', padding: '24px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '32px' }}>
+          <form onSubmit={createProject} style={{ display: 'flex', gap: '12px' }}>
+            <input 
+              type="text" 
+              placeholder="Nombre del nuevo proyecto..." 
+              value={newProjectName}
+              onChange={e => setNewProjectName(e.target.value)}
+              style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
+            />
+            <button type="submit" className="btn" style={{ width: 'auto', padding: '0 24px' }}>Crear Proyecto</button>
+          </form>
+        </div>
 
-        {/* Usamos onClick en lugar de onPointerUp para no bloquear el drag de la cámara */}
-        <mesh 
-          rotation={[-Math.PI / 2, 0, 0]} 
-          position={[0, 0, 0]} 
-          onClick={(e) => {
-            e.stopPropagation();
-            if(placementMode) {
-              handleGroundClick(e);
-            } else {
-              setSelectedId(null);
-            }
-          }}
-          receiveShadow
-        >
-          <planeGeometry args={[100, 100]} />
-          <meshStandardMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
+        <div style={{ width: '100%', maxWidth: '800px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '20px' }}>
+          {projects.length === 0 && <p style={{ color: '#64748b', gridColumn: '1 / -1', textAlign: 'center', padding: '40px 0' }}>No tienes ningún proyecto todavía. ¡Crea uno arriba!</p>}
+          
+          {projects.map(proj => (
+            <div key={proj.id} style={{ background: 'rgba(30,41,59,0.8)', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ margin: 0, color: 'white' }}>{proj.name}</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>{proj.objects?.length || 0} figuras</p>
+              <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                <button className="btn" style={{ flex: 1, padding: '8px' }} onClick={() => openProject(proj)}>Abrir</button>
+                <button className="btn btn-danger" style={{ width: 'auto', padding: '8px 12px' }} onClick={() => deleteProject(proj.id)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-        <ContactShadows position={[0, -0.01, 0]} opacity={0.4} scale={20} blur={2} far={4} />
-        <Grid 
-          infiniteGrid 
-          fadeDistance={30} 
-          sectionColor="#6b7280" 
-          cellColor="#374151" 
-          position={[0, -0.02, 0]} 
-        />
-        
-        {/* React Three Drei gestionará automáticamente este OrbitControls gracias a makeDefault */}
-        <OrbitControls 
-          makeDefault 
-          minPolarAngle={0} 
-          maxPolarAngle={Math.PI / 2 - 0.05}
-        />
-      </Canvas>
-    </div>
-  );
+  if (view === 'editor' && currentProject) {
+    return (
+      <Editor3D 
+        project={currentProject} 
+        onSave={saveProject} 
+        onExit={() => setView('dashboard')} 
+      />
+    );
+  }
+
+  return null;
 }
