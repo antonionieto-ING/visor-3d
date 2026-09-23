@@ -113,13 +113,14 @@ const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => 
 };
 
 // Componente para Formas Básicas
-const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects }) => {
+const BasicShape = ({ id, type, position, rotation, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects, transformMode }) => {
   const [hovered, setHovered] = useState(false);
   const meshRef = useRef();
   
   // Guardamos la última posición válida conocida para revertir si hay colisión
   const lastValidPosition = useRef([...position]);
   const currentPos = useRef([...position]);
+  const currentRot = useRef(rotation ? [...rotation] : [0, 0, 0]);
 
   const { width = 1, height = 1, depth = 1, radius = 0.6 } = dimensions || {};
 
@@ -161,13 +162,14 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
     
     let newPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
     
-    if (!allowOverlap) {
+    if (!allowOverlap && transformMode === 'translate') {
       newPos = resolveCollision(lastValidPosition.current, newPos, type, dimensions, allObjects, id);
       meshRef.current.position.set(...newPos);
     }
     
     lastValidPosition.current = [...newPos];
     currentPos.current = [...newPos];
+    currentRot.current = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
   };
 
   const renderTooltip = () => {
@@ -203,11 +205,13 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
   };
 
   const renderShape = () => {
+    const rot = rotation || [0, 0, 0];
     if (type === 'cube') {
       return (
         <mesh 
           ref={meshRef} 
           position={position} 
+          rotation={rot}
           onClick={handleClick} 
           onPointerOver={handlePointerOver} 
           onPointerOut={handlePointerOut}
@@ -224,6 +228,7 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
         <mesh 
           ref={meshRef} 
           position={position} 
+          rotation={rot}
           onClick={handleClick} 
           onPointerOver={handlePointerOver} 
           onPointerOut={handlePointerOut}
@@ -240,6 +245,7 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
         <mesh 
           ref={meshRef} 
           position={position} 
+          rotation={rot}
           onClick={handleClick} 
           onPointerOver={handlePointerOver} 
           onPointerOut={handlePointerOut}
@@ -256,6 +262,7 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
         <mesh 
           ref={meshRef} 
           position={position} 
+          rotation={rot}
           onClick={handleClick} 
           onPointerOver={handlePointerOver} 
           onPointerOut={handlePointerOut}
@@ -276,12 +283,14 @@ const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelec
       {isSelected && meshRef.current && (
         <TransformControls 
           object={meshRef.current} 
-          mode="translate"
+          mode={transformMode || "translate"}
+          space={transformMode === 'rotate' ? "local" : "world"}
           onChange={handleTransformChange}
           onMouseUp={() => {
             if (meshRef.current) {
               const finalPos = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
-              onTransformEnd(id, finalPos);
+              const finalRot = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
+              onTransformEnd(id, finalPos, finalRot);
             }
           }}
         />
@@ -296,6 +305,7 @@ export default function App() {
   const [placementMode, setPlacementMode] = useState(null);
   const [allowOverlap, setAllowOverlap] = useState(true);
   const [selectedShape, setSelectedShape] = useState('cube');
+  const [transformMode, setTransformMode] = useState('translate');
   
   const [dims, setDims] = useState({
     width: 1,
@@ -326,6 +336,7 @@ export default function App() {
       id: Date.now(),
       type: placementMode,
       position: [x, yPos, z],
+      rotation: [0, 0, 0],
       dimensions: { ...dims },
       color: `hsl(${Math.random() * 360}, 80%, 60%)`
     };
@@ -352,9 +363,9 @@ export default function App() {
   };
 
   // Cuando soltamos el objeto tras moverlo, guardamos el estado final en React
-  const handleTransformEnd = (id, newPosition) => {
+  const handleTransformEnd = (id, newPosition, newRotation) => {
     setObjects(objects.map(obj => 
-      obj.id === id ? { ...obj, position: newPosition } : obj
+      obj.id === id ? { ...obj, position: newPosition, rotation: newRotation } : obj
     ));
   };
 
@@ -397,6 +408,26 @@ export default function App() {
               <span className="slider"></span>
             </label>
           </div>
+
+          {selectedId && (
+            <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', paddingBottom: '4px' }}>
+              <label>Modo de Edición</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  style={{ flex: 1, padding: '4px', background: transformMode === 'translate' ? '#3b82f6' : 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer' }}
+                  onClick={() => setTransformMode('translate')}
+                >
+                  Mover
+                </button>
+                <button 
+                  style={{ flex: 1, padding: '4px', background: transformMode === 'rotate' ? '#3b82f6' : 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer' }}
+                  onClick={() => setTransformMode('rotate')}
+                >
+                  Rotar
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
             <label>Figura</label>
@@ -466,6 +497,7 @@ export default function App() {
             onTransformEnd={handleTransformEnd}
             allowOverlap={allowOverlap}
             allObjects={objects}
+            transformMode={transformMode}
           />
         ))}
 
