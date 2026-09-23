@@ -308,6 +308,7 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
   const [newCoords, setNewCoords] = useState({ x: 0, y: 0, z: 0 });
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#8b5cf6');
+  const [showAdvancedCoords, setShowAdvancedCoords] = useState(false);
 
   const updateObjects = (newObjects) => {
     setHistory(prev => {
@@ -500,18 +501,31 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
             <input type="number" step="0.1" name="radius" value={displayDims.radius || 0.6} onChange={handleDimChange} />
           </div>
             
-            <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-              <label style={{ color: '#f472b6' }}>Pos X</label>
-              <input type="number" step="0.1" name="x" value={displayCoords.x} onChange={handleCoordChange} />
-            </div>
-            <div className="input-row">
-              <label style={{ color: '#f472b6' }}>Pos Y</label>
-              <input type="number" step="0.1" name="y" value={displayCoords.y} onChange={handleCoordChange} />
-            </div>
-            <div className="input-row">
-              <label style={{ color: '#f472b6' }}>Pos Z</label>
-              <input type="number" step="0.1" name="z" value={displayCoords.z} onChange={handleCoordChange} />
-            </div>
+            {(!selectedId && !showAdvancedCoords) && (
+              <button 
+                onClick={() => setShowAdvancedCoords(true)} 
+                style={{ background: 'none', border: '1px solid rgba(255,255,255,0.1)', color: '#a78bfa', padding: '6px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', marginTop: '8px' }}
+              >
+                📍 Usar Coordenadas Exactas
+              </button>
+            )}
+
+            {(selectedId || showAdvancedCoords) && (
+              <>
+                <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+                  <label style={{ color: '#f472b6' }}>Pos X</label>
+                  <input type="number" step="0.1" name="x" value={displayCoords.x} onChange={handleCoordChange} />
+                </div>
+                <div className="input-row">
+                  <label style={{ color: '#f472b6' }}>Pos Y</label>
+                  <input type="number" step="0.1" name="y" value={displayCoords.y} onChange={handleCoordChange} />
+                </div>
+                <div className="input-row">
+                  <label style={{ color: '#f472b6' }}>Pos Z</label>
+                  <input type="number" step="0.1" name="z" value={displayCoords.z} onChange={handleCoordChange} />
+                </div>
+              </>
+            )}
             
             <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
               <label>Color</label>
@@ -558,7 +572,7 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
 
         <div className="panel-content">
           <div className="button-group">
-            {!selectedId && (
+            {(!selectedId && showAdvancedCoords) && (
               <button className="btn" onClick={handleManualCreate} style={{ backgroundColor: '#a78bfa' }}>
                 Crear en Posición Exacta
               </button>

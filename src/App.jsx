@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { Trash2, Save, FolderOpen, LogIn, User, X } from 'lucide-react';
+import { Trash2, Save, FolderOpen, LogIn, User, X, Edit2, Check } from 'lucide-react';
 import Editor3D from './Editor3D';
 import './index.css';
 
@@ -20,11 +20,14 @@ export default function App() {
   const [history, setHistory] = useState([]);
   
   const [pendingSave, setPendingSave] = useState(false);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
 
-  // Formularios
+  // Formularios y Renombrado
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
+  const [editingProjectId, setEditingProjectId] = useState(null);
+  const [editingProjectName, setEditingProjectName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -44,7 +47,7 @@ export default function App() {
 
   useEffect(() => {
     if (user && pendingSave) {
-      handleAutoSaveDefault(user.uid);
+      setSaveModalOpen(true);
       setPendingSave(false);
     }
   }, [user, pendingSave]);
@@ -65,25 +68,6 @@ export default function App() {
     }
   };
 
-  const handleAutoSaveDefault = async (uid) => {
-    const projs = await loadProjects(uid);
-    let defaultProj = projs.find(p => p.name === "Default");
-    
-    if (defaultProj) {
-      const projRef = doc(db, "projects", defaultProj.id);
-      await updateDoc(projRef, { objects, updatedAt: serverTimestamp() });
-      setCurrentProject({ ...defaultProj, objects });
-      alert("Se guardaron tus figuras en el proyecto 'Default'.");
-    } else {
-      const newProj = { name: "Default", objects, updatedAt: serverTimestamp(), userId: uid };
-      const docRef = await addDoc(collection(db, "projects"), newProj);
-      setCurrentProject({ id: docRef.id, ...newProj });
-      setProjects([...projs, { id: docRef.id, ...newProj }]);
-      alert("Se creó un proyecto 'Default' con tus figuras guardadas.");
-    }
-    setView('editor');
-  };
-
   const handleTopBarSave = () => {
     if (!user && !isGuest) {
       setPendingSave(true);
@@ -91,22 +75,8 @@ export default function App() {
       return;
     }
     
-    if (isGuest) {
-      if (!currentProject) {
-        const newProj = { id: Date.now().toString(), name: "Default", objects, updatedAt: Date.now() };
-        setCurrentProject(newProj);
-        const updated = [...projects, newProj];
-        setProjects(updated);
-        localStorage.setItem('guestProjects', JSON.stringify(updated));
-        alert("Guardado localmente en 'Default' (Invitado)");
-      } else {
-        saveProject(objects);
-      }
-      return;
-    }
-
     if (!currentProject) {
-      handleAutoSaveDefault(user.uid);
+      setSaveModalOpen(true);
     } else {
       saveProject(objects);
     }
@@ -169,13 +139,13 @@ export default function App() {
     setView('editor');
   };
 
-  const createProject = async (e) => {
+  const handleSaveNewProject = async (e) => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
     
     const newProj = {
       name: newProjectName,
-      objects: [],
+      objects: objects,
       updatedAt: user ? serverTimestamp() : Date.now()
     };
 
@@ -184,19 +154,49 @@ export default function App() {
       const updated = [...projects, newProj];
       setProjects(updated);
       localStorage.setItem('guestProjects', JSON.stringify(updated));
+      setCurrentProject(newProj);
+      setSaveModalOpen(false);
       setNewProjectName('');
+      alert("Guardado localmente en nuevo proyecto (Invitado)");
     } else {
       try {
         const docRef = await addDoc(collection(db, "projects"), {
           ...newProj,
           userId: user.uid
         });
-        setProjects([...projects, { id: docRef.id, ...newProj }]);
+        const savedProj = { id: docRef.id, ...newProj };
+        setProjects([...projects, savedProj]);
+        setCurrentProject(savedProj);
+        setSaveModalOpen(false);
         setNewProjectName('');
+        alert("¡Proyecto guardado en la nube!");
       } catch (err) {
         console.error("Error creando proyecto", err);
       }
     }
+  };
+
+  const handleRenameProject = async (id) => {
+    if (!editingProjectName.trim()) {
+      setEditingProjectId(null);
+      return;
+    }
+    
+    if (isGuest) {
+      const updated = projects.map(p => p.id === id ? { ...p, name: editingProjectName } : p);
+      setProjects(updated);
+      localStorage.setItem('guestProjects', JSON.stringify(updated));
+      if (currentProject?.id === id) setCurrentProject(prev => ({ ...prev, name: editingProjectName }));
+    } else {
+      try {
+        await updateDoc(doc(db, "projects", id), { name: editingProjectName });
+        setProjects(projects.map(p => p.id === id ? { ...p, name: editingProjectName } : p));
+        if (currentProject?.id === id) setCurrentProject(prev => ({ ...prev, name: editingProjectName }));
+      } catch (err) {
+        console.error("Error renombrando proyecto", err);
+      }
+    }
+    setEditingProjectId(null);
   };
 
   const deleteProject = async (id) => {
@@ -259,7 +259,7 @@ export default function App() {
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '60px', background: 'rgba(15,23,42,0.9)', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', zIndex: 100, backdropFilter: 'blur(10px)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <h2 style={{ margin: 0, fontSize: '18px', background: 'linear-gradient(135deg, #a78bfa, #f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', cursor: 'pointer' }} onClick={() => setView('editor')}>
-            {currentProject ? `Visor 3D - ${currentProject.name}` : 'Visor 3D - Proyecto Nuevo'}
+            {currentProject ? `Visor 3D - ${currentProject.name}` : 'Visor 3D - Lienzo en Blanco'}
           </h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -298,7 +298,7 @@ export default function App() {
             </button>
             
             <h1 style={{ textAlign: 'center', marginBottom: '24px' }}>Inicia Sesión</h1>
-            {pendingSave && <p style={{ textAlign: 'center', marginBottom: '24px', color: '#10b981' }}>Inicia sesión para guardar tu proyecto automáticamente.</p>}
+            {pendingSave && <p style={{ textAlign: 'center', marginBottom: '24px', color: '#10b981' }}>Inicia sesión para guardar tu proyecto de forma segura.</p>}
             
             {error && <div style={{ color: '#ef4444', fontSize: '13px', marginBottom: '16px', textAlign: 'center' }}>{error}</div>}
             
@@ -343,6 +343,30 @@ export default function App() {
         </div>
       )}
 
+      {/* Pantalla Flotante de Nuevo Guardado (Nombre) */}
+      {saveModalOpen && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(8px)', zIndex: 300, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="ui-panel" style={{ position: 'relative', top: 'auto', left: 'auto', width: '380px', animation: 'none' }}>
+            <button onClick={() => setSaveModalOpen(false)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
+              <X size={20} />
+            </button>
+            <h1 style={{ textAlign: 'center', marginBottom: '24px' }}>Guardar Proyecto</h1>
+            <p style={{ textAlign: 'center', fontSize: '13px', color: '#cbd5e1', marginBottom: '20px' }}>Dale un nombre a tu nueva creación para guardarla en tus proyectos.</p>
+            <form onSubmit={handleSaveNewProject} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <input 
+                type="text" 
+                placeholder="Nombre del proyecto..." 
+                value={newProjectName}
+                onChange={e => setNewProjectName(e.target.value)}
+                style={{ padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
+                autoFocus
+              />
+              <button type="submit" className="btn" style={{ backgroundColor: '#10b981' }}>Guardar y Continuar</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Pantalla Flotante de Dashboard */}
       {view === 'dashboard' && (
         <div style={{ position: 'absolute', top: '60px', left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(10px)', zIndex: 200, overflowY: 'auto', padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -360,17 +384,19 @@ export default function App() {
             <button className="btn btn-danger" style={{ width: 'auto' }} onClick={handleLogout}>Cerrar Sesión</button>
           </div>
 
-          <div style={{ width: '100%', maxWidth: '800px', background: 'rgba(30,41,59,0.5)', padding: '24px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '32px' }}>
-            <form onSubmit={createProject} style={{ display: 'flex', gap: '12px' }}>
-              <input 
-                type="text" 
-                placeholder="Nombre del nuevo proyecto..." 
-                value={newProjectName}
-                onChange={e => setNewProjectName(e.target.value)}
-                style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
-              />
-              <button type="submit" className="btn" style={{ width: 'auto', padding: '0 24px' }}>Crear Proyecto</button>
-            </form>
+          <div style={{ width: '100%', maxWidth: '800px', background: 'rgba(30,41,59,0.5)', padding: '24px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '32px', display: 'flex', justifyContent: 'center' }}>
+            <button 
+              className="btn" 
+              style={{ backgroundColor: '#10b981', padding: '12px 24px', fontSize: '16px', maxWidth: '300px' }}
+              onClick={() => {
+                setCurrentProject(null);
+                setObjects([]);
+                setHistory([]);
+                setView('editor');
+              }}
+            >
+              Empezar Lienzo en Blanco
+            </button>
           </div>
 
           <div style={{ width: '100%', maxWidth: '800px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '20px' }}>
@@ -378,7 +404,34 @@ export default function App() {
             
             {projects.map(proj => (
               <div key={proj.id} style={{ background: 'rgba(30,41,59,0.8)', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <h3 style={{ margin: 0, color: 'white' }}>{proj.name}</h3>
+                
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  {editingProjectId === proj.id ? (
+                    <div style={{ display: 'flex', gap: '4px', width: '100%' }}>
+                      <input 
+                        type="text" 
+                        value={editingProjectName} 
+                        onChange={e => setEditingProjectName(e.target.value)}
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #8b5cf6', background: 'rgba(0,0,0,0.5)', color: 'white', outline: 'none' }}
+                        autoFocus
+                      />
+                      <button onClick={() => handleRenameProject(proj.id)} style={{ background: '#10b981', border: 'none', color: 'white', padding: '4px', borderRadius: '4px', cursor: 'pointer' }}>
+                        <Check size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <h3 style={{ margin: 0, color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proj.name}</h3>
+                      <button 
+                        onClick={() => { setEditingProjectId(proj.id); setEditingProjectName(proj.name); }}
+                        style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                    </>
+                  )}
+                </div>
+
                 <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>{proj.objects?.length || 0} figuras</p>
                 <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
                   <button className="btn" style={{ flex: 1, padding: '8px' }} onClick={() => openProject(proj)}>Abrir</button>
