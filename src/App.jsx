@@ -1,80 +1,161 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState, Suspense, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
-import { Box as BoxIcon, Circle, Trash2 } from 'lucide-react';
+import { OrbitControls, Grid, Environment, ContactShadows, TransformControls, Html } from '@react-three/drei';
+import { Box as BoxIcon, Circle, Trash2, MousePointer2 } from 'lucide-react';
 import './index.css';
 
-// Componente para Formas Básicas
-const BasicShape = ({ type, position, color, onClick }) => {
+const BasicShape = ({ id, type, position, color, dimensions, isSelected, onSelect, onTransform }) => {
   const [hovered, setHovered] = useState(false);
+  const meshRef = useRef();
 
-  const meshProps = {
-    position,
-    onClick: (e) => {
-      e.stopPropagation(); // Evita que el clic llegue a otros objetos debajo
-      onClick();
-    },
-    onPointerOver: (e) => {
-      e.stopPropagation();
-      setHovered(true);
-      document.body.style.cursor = 'pointer';
-    },
-    onPointerOut: (e) => {
-      e.stopPropagation();
-      setHovered(false);
-      document.body.style.cursor = 'auto';
-    }
+  // Calcular la escala de la geometría o usar dims
+  const { width = 1, height = 1, depth = 1, radius = 0.6 } = dimensions || {};
+
+  const handlePointerOver = (e) => {
+    e.stopPropagation();
+    setHovered(true);
+    document.body.style.cursor = 'pointer';
   };
 
-  const scale = hovered ? [1.1, 1.1, 1.1] : [1, 1, 1];
+  const handlePointerOut = (e) => {
+    e.stopPropagation();
+    setHovered(false);
+    document.body.style.cursor = 'auto';
+  };
 
-  if (type === 'cube') {
-    return (
-      <mesh {...meshProps} scale={scale}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color={color} roughness={0.3} metalness={0.2} />
-      </mesh>
-    );
-  }
-  
-  if (type === 'sphere') {
-    return (
-      <mesh {...meshProps} scale={scale}>
-        <sphereGeometry args={[0.6, 32, 32]} />
-        <meshStandardMaterial color={color} roughness={0.3} metalness={0.2} />
-      </mesh>
-    );
-  }
-  
-  return null;
+  const handleClick = (e) => {
+    e.stopPropagation();
+    onSelect(id);
+  };
+
+  // Resaltar si está seleccionado o con hover
+  const emissiveColor = isSelected ? "#333333" : (hovered ? "#111111" : "#000000");
+
+  const renderShape = () => {
+    if (type === 'cube') {
+      return (
+        <mesh 
+          ref={meshRef} 
+          position={position} 
+          onClick={handleClick} 
+          onPointerOver={handlePointerOver} 
+          onPointerOut={handlePointerOut}
+        >
+          <boxGeometry args={[width, height, depth]} />
+          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
+          
+          {hovered && !isSelected && (
+            <Html center position={[0, height / 2 + 0.2, 0]}>
+              <div className="tooltip">
+                Cubo<br/>
+                Ancho: <span>{width}</span> | Alto: <span>{height}</span> | Prof: <span>{depth}</span>
+              </div>
+            </Html>
+          )}
+        </mesh>
+      );
+    }
+    
+    if (type === 'sphere') {
+      return (
+        <mesh 
+          ref={meshRef} 
+          position={position} 
+          onClick={handleClick} 
+          onPointerOver={handlePointerOver} 
+          onPointerOut={handlePointerOut}
+        >
+          <sphereGeometry args={[radius, 32, 32]} />
+          <meshStandardMaterial color={color} emissive={emissiveColor} roughness={0.3} metalness={0.2} />
+          
+          {hovered && !isSelected && (
+            <Html center position={[0, radius + 0.2, 0]}>
+              <div className="tooltip">
+                Esfera<br/>
+                Radio: <span>{radius}</span>
+              </div>
+            </Html>
+          )}
+        </mesh>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <>
+      {renderShape()}
+      {/* TransformControls si el objeto está seleccionado */}
+      {isSelected && meshRef.current && (
+        <TransformControls 
+          object={meshRef.current} 
+          mode="translate"
+          onMouseUp={(e) => {
+            if (meshRef.current) {
+              const newPos = [
+                meshRef.current.position.x,
+                meshRef.current.position.y,
+                meshRef.current.position.z
+              ];
+              onTransform(id, newPos);
+            }
+          }}
+        />
+      )}
+    </>
+  );
 };
 
 export default function App() {
   const [objects, setObjects] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  
+  // Estado para el modo de "colocación"
+  const [placementMode, setPlacementMode] = useState(null); // 'cube' o 'sphere'
+  
+  // Configuración de dimensiones
+  const [dims, setDims] = useState({
+    width: 1,
+    height: 1,
+    depth: 1,
+    radius: 0.6,
+    elevation: 0 // altura base desde el suelo
+  });
 
-  // Función para añadir una nueva forma
-  const addObject = (type) => {
-    const newObj = {
-      id: Date.now(),
-      type,
-      // Posición aleatoria cerca del centro, siempre apoyado en el suelo (y=0.5 para cubo, 0.6 para esfera)
-      position: [
-        (Math.random() - 0.5) * 4, 
-        type === 'cube' ? 0.5 : 0.6, 
-        (Math.random() - 0.5) * 4
-      ],
-      // Color aleatorio vibrante
-      color: `hsl(${Math.random() * 360}, 80%, 60%)`
-    };
-    setObjects([...objects, newObj]);
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setDims(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
   };
 
-  // Función para cambiar de color al hacer clic
-  const changeColor = (id) => {
+  // Función que se ejecuta al hacer clic en el suelo
+  const handleGroundClick = (e) => {
+    if (!placementMode) {
+      setSelectedId(null); // Deseleccionar al hacer clic en vacío
+      return;
+    }
+
+    const { x, z } = e.point;
+    // La altura 'y' se calcula base de la geometría + elevación
+    let yPos = dims.elevation;
+    if (placementMode === 'cube') yPos += dims.height / 2;
+    if (placementMode === 'sphere') yPos += dims.radius;
+
+    const newObj = {
+      id: Date.now(),
+      type: placementMode,
+      position: [x, yPos, z],
+      dimensions: { ...dims },
+      color: `hsl(${Math.random() * 360}, 80%, 60%)`
+    };
+
+    setObjects([...objects, newObj]);
+    setSelectedId(newObj.id);
+    setPlacementMode(null); // Desactivar el modo de poner tras crear
+  };
+
+  const handleTransform = (id, newPosition) => {
     setObjects(objects.map(obj => 
-      obj.id === id 
-        ? { ...obj, color: `hsl(${Math.random() * 360}, 80%, 60%)` }
-        : obj
+      obj.id === id ? { ...obj, position: newPosition } : obj
     ));
   };
 
@@ -83,30 +164,63 @@ export default function App() {
       {/* UI Flotante */}
       <div className="ui-panel">
         <h1>Visor y Creador 3D</h1>
-        <p>Crea tu escena añadiendo formas. Haz clic en ellas para cambiar su color.</p>
+        <p>Configura las medidas y luego haz clic en "Poner..." para colocarlo en el suelo. Selecciona un objeto para moverlo.</p>
         
+        <div className="settings-group">
+          <div className="input-row">
+            <label>Ancho (X)</label>
+            <input type="number" step="0.1" name="width" value={dims.width} onChange={handleInputChange} />
+          </div>
+          <div className="input-row">
+            <label>Alto (Y)</label>
+            <input type="number" step="0.1" name="height" value={dims.height} onChange={handleInputChange} />
+          </div>
+          <div className="input-row">
+            <label>Prof. (Z)</label>
+            <input type="number" step="0.1" name="depth" value={dims.depth} onChange={handleInputChange} />
+          </div>
+          <div className="input-row">
+            <label>Radio (Esf.)</label>
+            <input type="number" step="0.1" name="radius" value={dims.radius} onChange={handleInputChange} />
+          </div>
+          <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+            <label title="Distancia desde el suelo">Elevación Base</label>
+            <input type="number" step="0.1" name="elevation" value={dims.elevation} onChange={handleInputChange} />
+          </div>
+        </div>
+
         <div className="button-group">
-          <button onClick={() => addObject('cube')} className="btn">
-            <BoxIcon size={18} /> Añadir Cubo
+          <button 
+            className={`btn ${placementMode === 'cube' ? 'active' : ''}`}
+            onClick={() => setPlacementMode(placementMode === 'cube' ? null : 'cube')}
+          >
+            {placementMode === 'cube' ? <MousePointer2 size={18} /> : <BoxIcon size={18} />}
+            {placementMode === 'cube' ? 'Haz clic en el suelo...' : 'Poner Cubo'}
           </button>
-          <button onClick={() => addObject('sphere')} className="btn">
-            <Circle size={18} /> Añadir Esfera
+
+          <button 
+            className={`btn ${placementMode === 'sphere' ? 'active' : ''}`}
+            onClick={() => setPlacementMode(placementMode === 'sphere' ? null : 'sphere')}
+          >
+            {placementMode === 'sphere' ? <MousePointer2 size={18} /> : <Circle size={18} />}
+            {placementMode === 'sphere' ? 'Haz clic en el suelo...' : 'Poner Esfera'}
           </button>
           
           {objects.length > 0 && (
-            <button onClick={() => setObjects([])} className="btn btn-danger">
+            <button onClick={() => { setObjects([]); setSelectedId(null); }} className="btn btn-danger">
               <Trash2 size={18} /> Limpiar Escena
             </button>
           )}
         </div>
 
         <div className="help-text">
-          Arrastra con el ratón para rotar la cámara. Scroll para zoom.
+          - <b>Para mover cámara:</b> Arrastra al fondo (sin seleccionar nada).<br/>
+          - <b>Para mover objeto:</b> Hazle clic y usa las flechas 3D.
         </div>
       </div>
 
       {/* Entorno 3D */}
-      <Canvas camera={{ position: [4, 4, 6], fov: 45 }} shadows>
+      <Canvas camera={{ position: [6, 6, 8], fov: 45 }} shadows>
         {/* Luces y Entorno */}
         <ambientLight intensity={0.5} />
         <directionalLight 
@@ -121,30 +235,44 @@ export default function App() {
           <Environment preset="city" />
         </Suspense>
 
-        {/* Renderizado de objetos */}
+        {/* Objetos */}
         {objects.map(obj => (
           <BasicShape 
             key={obj.id} 
             {...obj} 
-            onClick={() => changeColor(obj.id)} 
+            isSelected={selectedId === obj.id}
+            onSelect={setSelectedId}
+            onTransform={handleTransform}
           />
         ))}
 
-        {/* Suelo y Sombras */}
-        <ContactShadows position={[0, 0, 0]} opacity={0.4} scale={20} blur={2} far={4} />
+        {/* Suelo Invisible para recibir clics */}
+        <mesh 
+          rotation={[-Math.PI / 2, 0, 0]} 
+          position={[0, 0, 0]} 
+          onPointerUp={handleGroundClick}
+          receiveShadow
+        >
+          <planeGeometry args={[100, 100]} />
+          <meshStandardMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+
+        {/* Sombras y Cuadrícula puramente visuales */}
+        <ContactShadows position={[0, -0.01, 0]} opacity={0.4} scale={20} blur={2} far={4} />
         <Grid 
           infiniteGrid 
           fadeDistance={30} 
           sectionColor="#6b7280" 
           cellColor="#374151" 
-          position={[0, -0.01, 0]} 
+          position={[0, -0.02, 0]} 
         />
         
-        {/* Controles de cámara */}
+        {/* Controles de cámara. Se desactivan si un TransformControls está usándose, 
+            pero TransformControls ya lo maneja internamente en react-three/drei */}
         <OrbitControls 
           makeDefault 
           minPolarAngle={0} 
-          maxPolarAngle={Math.PI / 2 - 0.05} // No permite ir por debajo del suelo
+          maxPolarAngle={Math.PI / 2 - 0.05}
         />
       </Canvas>
     </div>
