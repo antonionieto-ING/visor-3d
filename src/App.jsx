@@ -281,7 +281,7 @@ export default function App() {
               <button 
                 className="btn" 
                 onClick={handleTopBarSave} 
-                style={{ padding: 0, backgroundColor: saveStatus === 'saving' ? '#fbbf24' : '#10b981', transition: 'background-color 0.3s ease', width: '110px', height: '36px', overflow: 'hidden' }}
+                style={{ padding: 0, backgroundColor: saveStatus === 'saving' ? '#fbbf24' : '#10b981', transition: 'background-color 0.3s ease', width: '120px', minWidth: '120px', height: '36px', overflow: 'hidden', display: 'block' }}
                 disabled={saveStatus === 'saving'}
               >
                 <div style={{
@@ -310,7 +310,7 @@ export default function App() {
               <button 
                 className="btn" 
                 onClick={handleTopBarSave} 
-                style={{ padding: 0, backgroundColor: '#10b981', width: '110px', height: '36px', overflow: 'hidden' }}
+                style={{ padding: 0, backgroundColor: '#10b981', width: '120px', minWidth: '120px', height: '36px', overflow: 'hidden', display: 'block' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '36px' }}>
                   <Save size={16} /> Guardar
