@@ -302,8 +302,12 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
   const [transformMode, setTransformMode] = useState('translate');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   
-  const [shapeName, setShapeName] = useState('');
-  const [shapeColor, setShapeColor] = useState('#8b5cf6');
+  const selectedObj = useMemo(() => objects.find(o => o.id === selectedId), [objects, selectedId]);
+
+  const [newDims, setNewDims] = useState({ width: 1, height: 1, depth: 1, radius: 0.6 });
+  const [newCoords, setNewCoords] = useState({ x: 0, y: 0, z: 0 });
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState('#8b5cf6');
 
   const updateObjects = (newObjects) => {
     setHistory(prev => {
@@ -334,17 +338,47 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
   
-  const [dims, setDims] = useState({
-    width: 1,
-    height: 1,
-    depth: 1,
-    radius: 0.6,
-    elevation: 0
-  });
-
-  const handleInputChange = (e) => {
+  // Manejadores de Inputs
+  const handleDimChange = (e) => {
     const { name, value } = e.target;
-    setDims(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
+    const val = parseFloat(value) || 0;
+    if (selectedObj) {
+       setObjects(objects.map(o => o.id === selectedId ? { ...o, dimensions: { ...o.dimensions, [name]: val } } : o));
+    } else {
+       setNewDims(prev => ({ ...prev, [name]: val }));
+    }
+  };
+
+  const handleCoordChange = (e) => {
+    const { name, value } = e.target;
+    const val = parseFloat(value) || 0;
+    if (selectedObj) {
+       const newPos = [...selectedObj.position];
+       if (name === 'x') newPos[0] = val;
+       if (name === 'y') newPos[1] = val;
+       if (name === 'z') newPos[2] = val;
+       setObjects(objects.map(o => o.id === selectedId ? { ...o, position: newPos } : o));
+    } else {
+       setNewCoords(prev => ({ ...prev, [name]: val }));
+    }
+  };
+
+  const handleColorChange = (e) => {
+    const val = e.target.value;
+    if (selectedObj) {
+       setObjects(objects.map(o => o.id === selectedId ? { ...o, color: val } : o));
+    } else {
+       setNewColor(val);
+    }
+  };
+
+  const handleNameChange = (e) => {
+    const val = e.target.value;
+    if (selectedObj) {
+       setObjects(objects.map(o => o.id === selectedId ? { ...o, name: val } : o));
+    } else {
+       setNewName(val);
+    }
   };
 
   // Cuando hacemos clic en el suelo para colocar algo
@@ -355,21 +389,20 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
     }
 
     const { x, z } = e.point;
-    let yPos = dims.elevation;
-    if (placementMode === 'cube' || placementMode === 'ramp' || placementMode === 'cylinder') yPos += dims.height / 2;
-    if (placementMode === 'sphere') yPos += dims.radius;
+    let yPos = 0; // El suelo es 0
+    if (placementMode === 'cube' || placementMode === 'ramp' || placementMode === 'cylinder') yPos += newDims.height / 2;
+    if (placementMode === 'sphere') yPos += newDims.radius;
 
     const newObj = {
       id: Date.now(),
-      name: shapeName,
+      name: newName,
       type: placementMode,
       position: [x, yPos, z],
       rotation: [0, 0, 0],
-      dimensions: { ...dims },
-      color: shapeColor
+      dimensions: { ...newDims },
+      color: newColor
     };
 
-    // Validar colisión inicial si no se permite superposición
     if (!allowOverlap) {
       const myBox = getAABB(newObj.position, newObj.type, newObj.dimensions);
       let collision = false;
@@ -379,15 +412,26 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
           collision = true; break;
         }
       }
-      if (collision) {
-        // No creamos el objeto si cae encima de otro
-        return;
-      }
+      if (collision) return;
     }
 
     updateObjects([...objects, newObj]);
     setSelectedId(newObj.id);
     setPlacementMode(null);
+  };
+
+  const handleManualCreate = () => {
+    const newObj = {
+      id: Date.now(),
+      name: newName,
+      type: selectedShape,
+      position: [newCoords.x, newCoords.y, newCoords.z],
+      rotation: [0, 0, 0],
+      dimensions: { ...newDims },
+      color: newColor
+    };
+    updateObjects([...objects, newObj]);
+    setSelectedId(newObj.id);
   };
 
   // Cuando soltamos el objeto tras moverlo, guardamos el estado final en React
@@ -396,6 +440,12 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
       obj.id === id ? { ...obj, position: newPosition, rotation: newRotation } : obj
     ));
   };
+
+  const displayDims = selectedObj ? selectedObj.dimensions : newDims;
+  const displayCoords = selectedObj ? { x: selectedObj.position[0], y: selectedObj.position[1], z: selectedObj.position[2] } : newCoords;
+  const displayName = selectedObj ? (selectedObj.name || '') : newName;
+  const displayColor = selectedObj ? selectedObj.color : newColor;
+  const displayShape = selectedObj ? selectedObj.type : selectedShape;
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -406,38 +456,71 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
         </div>
         
         <div className="panel-content">
-          <p>Configura las medidas y haz clic en "Poner" para colocarlo. Usa las flechas 3D para mover.</p>
+          <p>{selectedId ? 'Editando figura seleccionada:' : 'Configura las medidas y haz clic en "Poner" para colocarlo, o añade coordenadas.'}</p>
           
           <div className="settings-group">
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#a78bfa' }}>
+              {selectedObj ? (displayName || 'Figura Sin Nombre') : 'Propiedades'}
+            </h3>
+
+            <div className="input-row" style={{ marginBottom: '8px' }}>
+              <label>Figura</label>
+              <select 
+                value={displayShape} 
+                onChange={(e) => {
+                  if (selectedObj) {
+                    setObjects(objects.map(o => o.id === selectedId ? { ...o, type: e.target.value } : o));
+                  } else {
+                    setSelectedShape(e.target.value);
+                  }
+                }}
+                style={{ width: '100%', padding: '6px', background: 'rgba(0,0,0,0.4)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', outline: 'none' }}
+              >
+                <option value="cube">Cubo</option>
+                <option value="sphere">Esfera</option>
+                <option value="cylinder">Cilindro</option>
+                <option value="ramp">Rampa</option>
+              </select>
+            </div>
+
             <div className="input-row">
               <label>Ancho (X)</label>
-              <input type="number" step="0.1" name="width" value={dims.width} onChange={handleInputChange} />
+              <input type="number" step="0.1" name="width" value={displayDims.width || 1} onChange={handleDimChange} />
             </div>
           <div className="input-row">
             <label>Alto (Y)</label>
-            <input type="number" step="0.1" name="height" value={dims.height} onChange={handleInputChange} />
+            <input type="number" step="0.1" name="height" value={displayDims.height || 1} onChange={handleDimChange} />
           </div>
           <div className="input-row">
             <label>Prof. (Z)</label>
-            <input type="number" step="0.1" name="depth" value={dims.depth} onChange={handleInputChange} />
+            <input type="number" step="0.1" name="depth" value={displayDims.depth || 1} onChange={handleDimChange} />
           </div>
           <div className="input-row">
             <label>Radio (Esf.)</label>
-            <input type="number" step="0.1" name="radius" value={dims.radius} onChange={handleInputChange} />
+            <input type="number" step="0.1" name="radius" value={displayDims.radius || 0.6} onChange={handleDimChange} />
           </div>
+            
             <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-              <label title="Distancia desde el suelo">Elevación Base</label>
-              <input type="number" step="0.1" name="elevation" value={dims.elevation} onChange={handleInputChange} />
+              <label style={{ color: '#f472b6' }}>Pos X</label>
+              <input type="number" step="0.1" name="x" value={displayCoords.x} onChange={handleCoordChange} />
+            </div>
+            <div className="input-row">
+              <label style={{ color: '#f472b6' }}>Pos Y</label>
+              <input type="number" step="0.1" name="y" value={displayCoords.y} onChange={handleCoordChange} />
+            </div>
+            <div className="input-row">
+              <label style={{ color: '#f472b6' }}>Pos Z</label>
+              <input type="number" step="0.1" name="z" value={displayCoords.z} onChange={handleCoordChange} />
             </div>
             
             <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
               <label>Color</label>
-              <input type="color" value={shapeColor} onChange={(e) => setShapeColor(e.target.value)} style={{ width: '60px', height: '30px', padding: '0', border: 'none', background: 'transparent', cursor: 'pointer' }} />
+              <input type="color" value={displayColor} onChange={handleColorChange} style={{ width: '60px', height: '30px', padding: '0', border: 'none', background: 'transparent', cursor: 'pointer' }} />
             </div>
 
             <div className="input-row" style={{ marginTop: '4px' }}>
               <label>Nombre</label>
-              <input type="text" value={shapeName} onChange={(e) => setShapeName(e.target.value)} placeholder="Ej: Pared..." style={{ width: '120px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255, 255, 255, 0.1)', color: 'white', padding: '6px 8px', borderRadius: '6px', fontSize: '13px', outline: 'none' }} />
+              <input type="text" value={displayName} onChange={handleNameChange} placeholder="Ej: Pared..." style={{ width: '120px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255, 255, 255, 0.1)', color: 'white', padding: '6px 8px', borderRadius: '6px', fontSize: '13px', outline: 'none' }} />
             </div>
             
             <div className="switch-container">
@@ -471,34 +554,28 @@ export default function Editor3D({ project, objects, setObjects, history, setHis
               </div>
             </div>
           )}
-
-          <div className="input-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-            <label>Figura</label>
-            <select 
-              value={selectedShape} 
-              onChange={(e) => setSelectedShape(e.target.value)}
-              style={{ width: '100%', padding: '6px', background: 'rgba(0,0,0,0.4)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', outline: 'none' }}
-            >
-              <option value="cube">Cubo</option>
-              <option value="sphere">Esfera</option>
-              <option value="cylinder">Cilindro</option>
-              <option value="ramp">Rampa</option>
-            </select>
-          </div>
         </div>
 
         <div className="panel-content">
           <div className="button-group">
-            <button 
-              className={`btn ${placementMode ? 'active' : ''}`}
-              onClick={() => {
-                setPlacementMode(placementMode ? null : selectedShape);
-                if (!placementMode) setIsPanelOpen(false); // Colapsar al activar modo poner
-              }}
-            >
-              <MousePointer2 size={18} />
-              {placementMode ? 'Haz clic en el suelo...' : 'Poner Figura'}
-            </button>
+            {!selectedId && (
+              <button className="btn" onClick={handleManualCreate} style={{ backgroundColor: '#a78bfa' }}>
+                Crear en Posición Exacta
+              </button>
+            )}
+
+            {!selectedId && (
+              <button 
+                className={`btn ${placementMode ? 'active' : ''}`}
+                onClick={() => {
+                  setPlacementMode(placementMode ? null : selectedShape);
+                  if (!placementMode) setIsPanelOpen(false); // Colapsar al activar modo poner
+                }}
+              >
+                <MousePointer2 size={18} />
+                {placementMode ? 'Haz clic en el suelo...' : 'Poner con Ratón'}
+              </button>
+            )}
           
           {objects.length > 0 && (
             <button 
