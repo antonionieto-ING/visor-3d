@@ -2,7 +2,7 @@ import React, { useState, Suspense, useRef, useMemo, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls, Grid, Environment, ContactShadows, TransformControls, Html } from '@react-three/drei';
-import { Box as BoxIcon, Circle, Trash2, MousePointer2, Undo2 } from 'lucide-react';
+import { Box as BoxIcon, Circle, Trash2, MousePointer2, Undo2, ChevronDown, ChevronUp } from 'lucide-react';
 import './index.css';
 
 // --- FUNCIONES DE COLISIÓN ---
@@ -113,7 +113,7 @@ const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => 
 };
 
 // Componente para Formas Básicas
-const BasicShape = ({ id, type, position, rotation, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects, transformMode }) => {
+const BasicShape = ({ id, name, type, position, rotation, color, dimensions, isSelected, onSelect, onTransformEnd, allowOverlap, allObjects, transformMode }) => {
   const [hovered, setHovered] = useState(false);
   const meshRef = useRef();
   
@@ -186,12 +186,7 @@ const BasicShape = ({ id, type, position, rotation, color, dimensions, isSelecte
     return (
       <Html center position={[0, yOffset, 0]}>
         <div className="tooltip">
-          <b>
-            {type === 'cube' && 'Cubo'}
-            {type === 'sphere' && 'Esfera'}
-            {type === 'cylinder' && 'Cilindro'}
-            {type === 'ramp' && 'Rampa'}
-          </b><br/>
+          <b>{name || (type === 'cube' ? 'Cubo' : type === 'sphere' ? 'Esfera' : type === 'cylinder' ? 'Cilindro' : 'Rampa')}</b><br/>
           {(type === 'cube' || type === 'ramp')
             ? <>Dim: <span>{width}x{height}x{depth}</span></> 
             : (type === 'cylinder' 
@@ -307,6 +302,10 @@ export default function App() {
   const [allowOverlap, setAllowOverlap] = useState(true);
   const [selectedShape, setSelectedShape] = useState('cube');
   const [transformMode, setTransformMode] = useState('translate');
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  
+  const [shapeName, setShapeName] = useState('');
+  const [shapeColor, setShapeColor] = useState('#8b5cf6');
 
   const updateObjects = (newObjects) => {
     setHistory(prev => {
@@ -364,11 +363,12 @@ export default function App() {
 
     const newObj = {
       id: Date.now(),
+      name: shapeName,
       type: placementMode,
       position: [x, yPos, z],
       rotation: [0, 0, 0],
       dimensions: { ...dims },
-      color: `hsl(${Math.random() * 360}, 80%, 60%)`
+      color: shapeColor
     };
 
     // Validar colisión inicial si no se permite superposición
@@ -401,15 +401,20 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <div className="ui-panel">
-        <h1>Visor y Creador 3D</h1>
-        <p>Configura las medidas y haz clic en "Poner" para colocarlo. Usa las flechas 3D para mover.</p>
+      <div className={`ui-panel ${isPanelOpen ? '' : 'collapsed'}`}>
+        <div className="panel-header" onClick={() => setIsPanelOpen(!isPanelOpen)}>
+          <h1>Visor y Creador 3D</h1>
+          {isPanelOpen ? <ChevronUp size={24} color="#a78bfa" /> : <ChevronDown size={24} color="#a78bfa" />}
+        </div>
         
-        <div className="settings-group">
-          <div className="input-row">
-            <label>Ancho (X)</label>
-            <input type="number" step="0.1" name="width" value={dims.width} onChange={handleInputChange} />
-          </div>
+        <div className="panel-content">
+          <p>Configura las medidas y haz clic en "Poner" para colocarlo. Usa las flechas 3D para mover.</p>
+          
+          <div className="settings-group">
+            <div className="input-row">
+              <label>Ancho (X)</label>
+              <input type="number" step="0.1" name="width" value={dims.width} onChange={handleInputChange} />
+            </div>
           <div className="input-row">
             <label>Alto (Y)</label>
             <input type="number" step="0.1" name="height" value={dims.height} onChange={handleInputChange} />
@@ -422,12 +427,22 @@ export default function App() {
             <label>Radio (Esf.)</label>
             <input type="number" step="0.1" name="radius" value={dims.radius} onChange={handleInputChange} />
           </div>
-          <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-            <label title="Distancia desde el suelo">Elevación Base</label>
-            <input type="number" step="0.1" name="elevation" value={dims.elevation} onChange={handleInputChange} />
-          </div>
-          
-          <div className="switch-container">
+            <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+              <label title="Distancia desde el suelo">Elevación Base</label>
+              <input type="number" step="0.1" name="elevation" value={dims.elevation} onChange={handleInputChange} />
+            </div>
+            
+            <div className="input-row" style={{ marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+              <label>Color</label>
+              <input type="color" value={shapeColor} onChange={(e) => setShapeColor(e.target.value)} style={{ width: '60px', height: '30px', padding: '0', border: 'none', background: 'transparent', cursor: 'pointer' }} />
+            </div>
+
+            <div className="input-row" style={{ marginTop: '4px' }}>
+              <label>Nombre</label>
+              <input type="text" value={shapeName} onChange={(e) => setShapeName(e.target.value)} placeholder="Ej: Pared..." style={{ width: '120px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255, 255, 255, 0.1)', color: 'white', padding: '6px 8px', borderRadius: '6px', fontSize: '13px', outline: 'none' }} />
+            </div>
+            
+            <div className="switch-container">
             <label className="switch-label">Permitir superposición</label>
             <label className="switch">
               <input 
@@ -474,14 +489,18 @@ export default function App() {
           </div>
         </div>
 
-        <div className="button-group">
-          <button 
-            className={`btn ${placementMode ? 'active' : ''}`}
-            onClick={() => setPlacementMode(placementMode ? null : selectedShape)}
-          >
-            <MousePointer2 size={18} />
-            {placementMode ? 'Haz clic en el suelo...' : 'Poner Figura'}
-          </button>
+        <div className="panel-content">
+          <div className="button-group">
+            <button 
+              className={`btn ${placementMode ? 'active' : ''}`}
+              onClick={() => {
+                setPlacementMode(placementMode ? null : selectedShape);
+                if (!placementMode) setIsPanelOpen(false); // Colapsar al activar modo poner
+              }}
+            >
+              <MousePointer2 size={18} />
+              {placementMode ? 'Haz clic en el suelo...' : 'Poner Figura'}
+            </button>
           
           {objects.length > 0 && (
             <button 
@@ -514,6 +533,8 @@ export default function App() {
           - <b>Control + Z</b> para deshacer el último cambio.<br/>
           - <b>Movimiento Diagonal:</b> Arrastra los cuadraditos del centro de las flechas.<br/>
           - <b>Para deseleccionar:</b> Haz clic en el fondo vacío y podrás rotar la cámara.
+        </div>
+          </div>
         </div>
       </div>
 

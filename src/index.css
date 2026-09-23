@@ -50,6 +50,50 @@ body {
   flex-direction: column;
   gap: 16px;
   animation: slideIn 0.5s ease-out;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.panel-header h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ui-panel.collapsed .panel-content {
+  display: none;
+}
+
+.ui-panel.collapsed {
+  max-height: 80px;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .ui-panel {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 80vh;
+    padding: 16px;
+  }
 }
 
 .ui-panel::-webkit-scrollbar {
@@ -58,16 +102,6 @@ body {
 .ui-panel::-webkit-scrollbar-thumb {
   background: var(--panel-border);
   border-radius: 4px;
-}
-
-.ui-panel h1 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, #a78bfa, #f472b6);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
 }
 
 .ui-panel p {
