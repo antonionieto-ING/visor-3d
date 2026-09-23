@@ -2,7 +2,7 @@ import React, { useState, Suspense, useRef, useMemo, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls, Grid, Environment, ContactShadows, TransformControls, Html } from '@react-three/drei';
-import { Box as BoxIcon, Circle, Trash2, MousePointer2 } from 'lucide-react';
+import { Box as BoxIcon, Circle, Trash2, MousePointer2, Undo2 } from 'lucide-react';
 import './index.css';
 
 // --- FUNCIONES DE COLISIÓN ---
@@ -301,11 +301,41 @@ const BasicShape = ({ id, type, position, rotation, color, dimensions, isSelecte
 
 export default function App() {
   const [objects, setObjects] = useState([]);
+  const [history, setHistory] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [placementMode, setPlacementMode] = useState(null);
   const [allowOverlap, setAllowOverlap] = useState(true);
   const [selectedShape, setSelectedShape] = useState('cube');
   const [transformMode, setTransformMode] = useState('translate');
+
+  const updateObjects = (newObjects) => {
+    setHistory(prev => {
+      const newHistory = [...prev, objects];
+      if (newHistory.length > 50) newHistory.shift();
+      return newHistory;
+    });
+    setObjects(newObjects);
+  };
+
+  const handleUndo = () => {
+    setHistory(prev => {
+      if (prev.length === 0) return prev;
+      const previousObjects = prev[prev.length - 1];
+      setObjects(previousObjects);
+      setSelectedId(null); // Evitar bugs si el objeto seleccionado ya no existe
+      return prev.slice(0, -1);
+    });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   
   const [dims, setDims] = useState({
     width: 1,
@@ -357,14 +387,14 @@ export default function App() {
       }
     }
 
-    setObjects([...objects, newObj]);
+    updateObjects([...objects, newObj]);
     setSelectedId(newObj.id);
     setPlacementMode(null);
   };
 
   // Cuando soltamos el objeto tras moverlo, guardamos el estado final en React
   const handleTransformEnd = (id, newPosition, newRotation) => {
-    setObjects(objects.map(obj => 
+    updateObjects(objects.map(obj => 
       obj.id === id ? { ...obj, position: newPosition, rotation: newRotation } : obj
     ));
   };
@@ -454,13 +484,34 @@ export default function App() {
           </button>
           
           {objects.length > 0 && (
-            <button onClick={() => { setObjects([]); setSelectedId(null); }} className="btn btn-danger">
-              <Trash2 size={18} /> Limpiar Escena
+            <button 
+              onClick={() => { 
+                if (selectedId) {
+                  updateObjects(objects.filter(o => o.id !== selectedId));
+                  setSelectedId(null);
+                } else {
+                  updateObjects([]); 
+                  setSelectedId(null);
+                }
+              }} 
+              className="btn btn-danger"
+            >
+              <Trash2 size={18} /> {selectedId ? 'Borrar Figura' : 'Limpiar Escena'}
             </button>
           )}
+
+          <button 
+            onClick={handleUndo} 
+            className="btn"
+            disabled={history.length === 0}
+            style={{ opacity: history.length === 0 ? 0.5 : 1, cursor: history.length === 0 ? 'not-allowed' : 'pointer' }}
+          >
+            <Undo2 size={18} /> Deshacer
+          </button>
         </div>
 
         <div className="help-text">
+          - <b>Control + Z</b> para deshacer el último cambio.<br/>
           - <b>Movimiento Diagonal:</b> Arrastra los cuadraditos del centro de las flechas.<br/>
           - <b>Para deseleccionar:</b> Haz clic en el fondo vacío y podrás rotar la cámara.
         </div>
