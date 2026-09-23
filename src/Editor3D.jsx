@@ -294,9 +294,7 @@ const BasicShape = ({ id, name, type, position, rotation, color, dimensions, isS
   );
 };
 
-export default function Editor3D({ project, onSave, onExit }) {
-  const [objects, setObjects] = useState(project?.objects || []);
-  const [history, setHistory] = useState([]);
+export default function Editor3D({ project, objects, setObjects, history, setHistory }) {
   const [selectedId, setSelectedId] = useState(null);
   const [placementMode, setPlacementMode] = useState(null);
   const [allowOverlap, setAllowOverlap] = useState(true);
@@ -321,7 +319,7 @@ export default function Editor3D({ project, onSave, onExit }) {
       if (prev.length === 0) return prev;
       const previousObjects = prev[prev.length - 1];
       setObjects(previousObjects);
-      setSelectedId(null); // Evitar bugs si el objeto seleccionado ya no existe
+      setSelectedId(null);
       return prev.slice(0, -1);
     });
   };
@@ -400,7 +398,7 @@ export default function Editor3D({ project, onSave, onExit }) {
   };
 
   return (
-    <div className="app-container">
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div className={`ui-panel ${isPanelOpen ? '' : 'collapsed'}`}>
         <div className="panel-header" onClick={() => setIsPanelOpen(!isPanelOpen)}>
           <h1>{project?.name || 'Visor y Creador 3D'}</h1>
@@ -408,10 +406,6 @@ export default function Editor3D({ project, onSave, onExit }) {
         </div>
         
         <div className="panel-content">
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            <button className="btn" onClick={() => onSave(objects)} style={{ flex: 1, backgroundColor: '#10b981' }}>Guardar</button>
-            <button className="btn btn-danger" onClick={onExit} style={{ flex: 1 }}>Salir</button>
-          </div>
           <p>Configura las medidas y haz clic en "Poner" para colocarlo. Usa las flechas 3D para mover.</p>
           
           <div className="settings-group">
