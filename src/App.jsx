@@ -281,10 +281,18 @@ export default function App() {
               <button 
                 className="btn" 
                 onClick={handleTopBarSave} 
-                style={{ padding: '8px 16px', backgroundColor: saveStatus === 'saved' ? '#10b981' : (saveStatus === 'saving' ? '#fbbf24' : '#10b981'), transition: 'all 0.3s ease' }}
+                style={{ padding: 0, backgroundColor: saveStatus === 'saving' ? '#fbbf24' : '#10b981', transition: 'background-color 0.3s ease', width: '110px', height: '36px', overflow: 'hidden' }}
                 disabled={saveStatus === 'saving'}
               >
-                {saveStatus === 'saved' ? <><Check size={16} /> ¡Guardado!</> : <><Save size={16} /> Guardar</>}
+                <div style={{
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  animation: saveStatus === 'saved' ? 'slideUpCheck 2s cubic-bezier(0.4, 0, 0.2, 1) forwards' : 'none'
+                }}>
+                  <div style={{ height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Save size={16} /> Guardar</div>
+                  <div style={{ height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Check size={20} /></div>
+                  <div style={{ height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Save size={16} /> Guardar</div>
+                </div>
               </button>
               
               {user && (
@@ -299,7 +307,15 @@ export default function App() {
           ) : (
             <>
               <button className="btn" onClick={() => setView('login')} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)' }}><LogIn size={16} /> Iniciar Sesión</button>
-              <button className="btn" onClick={handleTopBarSave} style={{ padding: '8px 16px', backgroundColor: '#10b981' }}><Save size={16} /> Guardar</button>
+              <button 
+                className="btn" 
+                onClick={handleTopBarSave} 
+                style={{ padding: 0, backgroundColor: '#10b981', width: '110px', height: '36px', overflow: 'hidden' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '36px' }}>
+                  <Save size={16} /> Guardar
+                </div>
+              </button>
             </>
           )}
         </div>
