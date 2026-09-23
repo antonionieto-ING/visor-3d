@@ -51,6 +51,11 @@ const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => 
   // EPSILON para evitar problemas de precisión de coma flotante al quedar pegados
   const EPS = 0.001;
 
+  // Comprobar colisión con el suelo (Y=0)
+  if (y - ry < 0) {
+    y = ry + EPS; // Impedir que atraviese el suelo
+  }
+
   // Comprobar eje X
   let tempBox = getAABB([x, lastY, lastZ], myType, myDims);
   for (const obj of allObjects) {
@@ -63,7 +68,7 @@ const resolveCollision = (lastPos, newPos, myType, myDims, allObjects, myId) => 
     }
   }
 
-  // Comprobar eje Y
+  // Comprobar eje Y (solo contra otros objetos, el suelo ya se comprobó)
   tempBox = getAABB([x, y, lastZ], myType, myDims);
   for (const obj of allObjects) {
     if (obj.id === myId) continue;
